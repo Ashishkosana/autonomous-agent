@@ -15,6 +15,8 @@ import {
 } from '../../src/domain/ids.js';
 import type { Plan } from '../../src/domain/plan.js';
 import { EMPTY_PROVENANCE, type RunCorrelation } from '../../src/domain/provenance.js';
+import type { AnyAgentEvent } from '../../src/events/contracts.js';
+import { RunEventFactory } from '../../src/events/factory.js';
 import type { ToolContext } from '../../src/tools/contracts.js';
 import { FixedClock, SequentialIdGenerator } from './deterministic.js';
 import { FakeExecutionEnvironment } from './fake-execution-environment.js';
@@ -99,7 +101,16 @@ export function makeHarness(): TestHarness {
     environment,
     events,
     toolContext(actionId = ACTION_ID) {
-      return { correlation: CORRELATION, actionId, environment, events, clock, ids };
+      const factory = new RunEventFactory(RUN_ID, GOAL_ID, ids, clock);
+      return {
+        correlation: CORRELATION,
+        actionId,
+        environment,
+        emit: (type, payload) =>
+          events.emit(factory.create(type, payload, { actionId }) as unknown as AnyAgentEvent),
+        clock,
+        ids,
+      };
     },
   };
 }

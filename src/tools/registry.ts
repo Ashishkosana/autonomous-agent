@@ -1,5 +1,6 @@
 import type { Clock } from '../domain/ids.js';
-import type { ToolResult } from './contracts.js';
+import { ExecutionEnvironmentError } from '../sandbox/execution-environment.js';
+import type { ToolError, ToolResult } from './contracts.js';
 import { describeTool, type Tool, type ToolContext, type ToolDescriptor } from './contracts.js';
 
 type AnyTool = Tool<unknown, unknown>;
@@ -100,14 +101,41 @@ export async function invokeTool(
 
   try {
     const output = await tool.execute(parsed.value, context);
-    return { ...base, ...finishTiming(context.clock, timing), status: 'ok', output };
+    const artifacts = tool.artifacts?.(parsed.value, output, context) ?? [];
+    return {
+      ...base,
+      ...finishTiming(context.clock, timing),
+      status: 'ok',
+      output,
+      ...(artifacts.length > 0 ? { artifacts } : {}),
+    };
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause);
     return {
       ...base,
       ...finishTiming(context.clock, timing),
       status: 'error',
-      error: { code: 'execution_failed', message, retryable: true, details: cause },
+      error: describeFailure(cause),
     };
   }
+}
+
+/**
+ * Environment-level failures carry a code that says whether trying again can
+ * help; everything else is an unexpected exception and stays retryable.
+ */
+function describeFailure(cause: unknown): ToolError {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  if (cause instanceof ExecutionEnvironmentError) {
+    switch (cause.code) {
+      case 'not_found':
+        return { code: 'not_found', message, retryable: false, details: cause };
+      case 'permission_denied':
+        return { code: 'permission_denied', message, retryable: false, details: cause };
+      case 'unavailable':
+        return { code: 'unavailable', message, retryable: true, details: cause };
+      case 'internal':
+        return { code: 'execution_failed', message, retryable: true, details: cause };
+    }
+  }
+  return { code: 'execution_failed', message, retryable: true, details: cause };
 }

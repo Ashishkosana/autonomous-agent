@@ -1,8 +1,34 @@
+import type { ArtifactRef } from '../domain/artifact.js';
 import type { ActionId, Clock, IdGenerator, IsoTimestamp } from '../domain/ids.js';
 import type { JsonSchema, ParseResult } from '../domain/parse.js';
 import type { RunCorrelation } from '../domain/provenance.js';
-import type { EventSink } from '../events/contracts.js';
+import type { AgentEventPayloads, AgentEventType } from '../events/contracts.js';
 import type { ExecutionEnvironment } from '../sandbox/execution-environment.js';
+
+/**
+ * Event types a tool may emit about its own work. Everything else in the
+ * schema belongs to the runtime (planning, selection, evaluation, learning).
+ */
+export type ToolEventType = Extract<
+  AgentEventType,
+  | 'COMMAND_STARTED'
+  | 'COMMAND_OUTPUT'
+  | 'COMMAND_FINISHED'
+  | 'FILE_CREATED'
+  | 'FILE_CHANGED'
+  | 'FILE_DELETED'
+  | 'BROWSER_NAVIGATION'
+>;
+
+/**
+ * Stamps and sequences an event on behalf of the tool. The runtime owns run
+ * ids, sequence numbers and the action's correlation; a tool only supplies
+ * the observable fact.
+ */
+export type ToolEventEmitter = <TType extends ToolEventType>(
+  type: TType,
+  payload: AgentEventPayloads[TType],
+) => void;
 
 export type ToolFamily =
   | 'web'
@@ -25,7 +51,7 @@ export interface ToolContext {
   readonly correlation: RunCorrelation;
   readonly actionId: ActionId;
   readonly environment: ExecutionEnvironment;
-  readonly events: EventSink;
+  readonly emit: ToolEventEmitter;
   readonly clock: Clock;
   readonly ids: IdGenerator;
 }
@@ -43,6 +69,11 @@ export interface Tool<TInput = unknown, TOutput = unknown> {
    * structured `ToolResult` with status "error".
    */
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
+  /**
+   * Artifacts the call produced or modified, derived from its input/output.
+   * Optional: tools that only read or compute produce none.
+   */
+  artifacts?(input: TInput, output: TOutput, context: ToolContext): readonly ArtifactRef[];
 }
 
 /** The portion of a tool a model provider is shown when asked to pick an action. */
@@ -54,7 +85,13 @@ export interface ToolDescriptor {
 }
 
 export type ToolErrorCode =
-  'unknown_tool' | 'invalid_input' | 'execution_failed' | 'timeout' | 'unavailable';
+  | 'unknown_tool'
+  | 'invalid_input'
+  | 'execution_failed'
+  | 'not_found'
+  | 'permission_denied'
+  | 'timeout'
+  | 'unavailable';
 
 export interface ToolError {
   readonly code: ToolErrorCode;
@@ -77,7 +114,11 @@ interface ToolResultBase {
  * the resulting Observation.
  */
 export type ToolResult<TOutput> =
-  | (ToolResultBase & { readonly status: 'ok'; readonly output: TOutput })
+  | (ToolResultBase & {
+      readonly status: 'ok';
+      readonly output: TOutput;
+      readonly artifacts?: readonly ArtifactRef[];
+    })
   | (ToolResultBase & { readonly status: 'error'; readonly error: ToolError });
 
 export function describeTool(tool: Tool<unknown, unknown>): ToolDescriptor {

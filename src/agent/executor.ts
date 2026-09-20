@@ -34,7 +34,8 @@ export class ToolExecutor implements Executor {
       correlation: action.correlation,
       actionId: action.actionId,
       environment: this.environment,
-      events: this.session.events,
+      // Tool events are stamped by the run session and inherit the action's correlation.
+      emit: (type, payload) => this.session.emit(type, payload, correlation),
       clock: this.session.clock,
       ids: this.session.ids,
     });
@@ -44,7 +45,7 @@ export class ToolExecutor implements Executor {
       actionId: action.actionId,
       correlation: action.correlation,
       toolResult: result,
-      artifacts: [],
+      artifacts: result.status === 'ok' ? (result.artifacts ?? []) : [],
       summary: summarise(result),
       observedAt: this.session.clock.now(),
     };
