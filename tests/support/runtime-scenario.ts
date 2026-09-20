@@ -3,6 +3,7 @@ import type { RunLimits } from '../../src/domain/run.js';
 import type { Evaluator } from '../../src/evaluation/contracts.js';
 import type { KnowledgeRecord, PersistentMemoryRecord } from '../../src/memory/records.js';
 import type { ToolActionProposal } from '../../src/models/contracts.js';
+import type { ExecutionEnvironment } from '../../src/sandbox/execution-environment.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { createAutonomousRun } from '../../src/agent/runtime/create-run.js';
 import type { RunOutcome } from '../../src/agent/runtime/agent-runtime.js';
@@ -124,6 +125,8 @@ export interface ScenarioOptions {
   readonly requirement?: ArtifactRequirement;
   readonly evaluator?: (ids: SequentialIdGenerator, clock: FixedClock) => Evaluator;
   readonly goalStatement?: string;
+  /** Defaults to a fresh FakeExecutionEnvironment; integration tests pass a real one. */
+  readonly environment?: ExecutionEnvironment;
 }
 
 export interface Scenario {
@@ -131,7 +134,7 @@ export interface Scenario {
   readonly clock: FixedClock;
   readonly events: InMemoryEventBus;
   readonly store: InMemoryMemoryStore;
-  readonly environment: FakeExecutionEnvironment;
+  readonly environment: ExecutionEnvironment;
   readonly provider: ScriptedModelProvider;
   run(): Promise<RunOutcome>;
 }
@@ -141,7 +144,7 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
   const clock = new FixedClock();
   const events = new InMemoryEventBus();
   const store = new InMemoryMemoryStore();
-  const environment = new FakeExecutionEnvironment();
+  const environment = options.environment ?? new FakeExecutionEnvironment();
   const provider = new ScriptedModelProvider(options.turns, ids);
   for (const record of options.seed ?? [seedKnowledge]) await store.put(record);
 
