@@ -168,6 +168,20 @@ describe('architecture rules', () => {
     expect(adapter).not.toMatch(/docker/i);
   });
 
+  it('tools touch the world only through ExecutionEnvironment: no node builtins in src/tools', () => {
+    const toolFiles = srcFiles.filter((file) => relative(SRC_ROOT, file).startsWith('tools'));
+    expect(toolFiles.length).toBeGreaterThan(5);
+    for (const file of toolFiles) {
+      const source = readFileSync(file, 'utf8');
+      for (const spec of importSpecifiers(source)) {
+        expect(spec, `${relative(SRC_ROOT, file)} imports ${spec}`).toMatch(/^\.\.?\//);
+      }
+      expect(source, `${relative(SRC_ROOT, file)} spawns or reads the host`).not.toMatch(
+        /child_process|readFileSync|writeFileSync|process\.(cwd|chdir)|(?<!typeof )(?<![.\w])fetch\s*\(/,
+      );
+    }
+  });
+
   it('the agent core never depends on a concrete execution environment', () => {
     for (const file of srcFiles) {
       const rel = relative(SRC_ROOT, file);

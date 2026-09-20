@@ -115,8 +115,11 @@ export class NamespaceContainerRuntime implements ContainerRuntime {
       cwd,
       ...argv,
     ];
+    // The sandbox image ships node on PATH; on the host it may live anywhere
+    // (nvm, a daemon directory), so expose the running Node's own directory.
+    const nodeDir = process.execPath.slice(0, process.execPath.lastIndexOf('/'));
     const env: Record<string, string> = {
-      PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+      PATH: `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${nodeDir}`,
       HOME: '/tmp',
       LANG: 'C.UTF-8',
       [MARKER]: name,
