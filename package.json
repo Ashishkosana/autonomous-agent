@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:cloudflare": "AGENT_REQUIRE_CLOUDFLARE=1 vitest run tests/integration/cloudflare",
     "test:local": "node scripts/test-local.mjs",
+    "test:model": "node scripts/test-model.mjs",
     "check": "npm run format:check && npm run typecheck && npm run test",
     "worker:dev": "wrangler dev -c worker/wrangler.jsonc",
     "worker:deploy": "wrangler deploy -c worker/wrangler.jsonc",

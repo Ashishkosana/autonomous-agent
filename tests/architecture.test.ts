@@ -83,17 +83,63 @@ describe('architecture rules', () => {
     }
   });
 
-  it('src has no runtime dependencies on third-party packages (the Cloudflare adapter included)', () => {
+  /**
+   * Third-party runtime dependencies are forbidden in src by default. When an
+   * adapter genuinely needs one (e.g. a browser-automation driver), it is added
+   * HERE as `{ file, packages }` — narrow, explicit, reviewed — never by
+   * relaxing the rule. Core dirs (CORE_DIRS) may never appear in this list.
+   */
+  const THIRD_PARTY_ALLOWLIST: readonly { file: string; packages: readonly string[] }[] = [];
+
+  it('src has no runtime dependencies on third-party packages outside the explicit adapter allowlist', () => {
+    for (const entry of THIRD_PARTY_ALLOWLIST) {
+      const top = entry.file.split('/')[0] ?? '';
+      expect(CORE_DIRS, `allowlist entry ${entry.file} is in a core directory`).not.toContain(top);
+    }
     for (const file of srcFiles) {
+      const rel = relative(SRC_ROOT, file).split(/[\\/]/).join('/');
+      const allowed = THIRD_PARTY_ALLOWLIST.find((e) => e.file === rel)?.packages ?? [];
       for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {
         const isRelative = spec.startsWith('.');
         const isNodeBuiltin = spec.startsWith('node:');
+        const isAllowlisted = allowed.some((pkg) => spec === pkg || spec.startsWith(`${pkg}/`));
         expect(
-          isRelative || isNodeBuiltin,
-          `${relative(SRC_ROOT, file)} imports third-party module ${spec}`,
+          isRelative || isNodeBuiltin || isAllowlisted,
+          `${rel} imports third-party module ${spec}`,
         ).toBe(true);
       }
     }
+  });
+
+  it('src never reads process.env; configuration is resolved by composition roots and passed in', () => {
+    for (const file of srcFiles) {
+      expect(
+        readFileSync(file, 'utf8'),
+        `${relative(SRC_ROOT, file)} reads process.env`,
+      ).not.toMatch(/process\.env/);
+    }
+  });
+
+  it('network egress from src is confined to named adapters', () => {
+    // Matches both a direct call and taking the global as a default implementation.
+    const callers = srcFiles
+      .filter((file) => /(?<!typeof )(?<![.\w])fetch\s*(\(|;|\))/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(SRC_ROOT, file).split(/[\\/]/).join('/'))
+      .sort();
+    expect(callers).toEqual([
+      'models/openai-compatible/provider.ts',
+      'sandbox/cloudflare/http-sandbox-client.ts',
+    ]);
+  });
+
+  it('the model layer keeps credentials out of what it exposes: no field named apiKey on providers', () => {
+    // Providers receive the key through config and must not retain it as a plain property.
+    const providerSource = readFileSync(
+      join(SRC_ROOT, 'models', 'openai-compatible', 'provider.ts'),
+      'utf8',
+    );
+    expect(providerSource).not.toMatch(/this\.apiKey/);
+    expect(providerSource).not.toMatch(/private\s+(readonly\s+)?apiKey/);
   });
 
   it('the Cloudflare SDK is imported only by the gateway Worker, never by src or tests', () => {
