@@ -1,0 +1,24 @@
+{
+  "name": "autonomous-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Observable autonomous learning agent — V1 architecture skeleton",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run format:check && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "prettier": "^3.9.8",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
