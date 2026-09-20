@@ -14,7 +14,7 @@ the decisions that shaped it.
 | **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records, working memory impl, store/retrieval contracts |
 | **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                 |
 | **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                             |
-| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; Cloudflare impl in Phase 3                    |
+| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; Cloudflare adapter built, real run pending    |
 | **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                   |
 | **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                 |
 | **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 9                                                 |
@@ -184,12 +184,34 @@ Retrieval (`src/memory/retrieval.ts`) returns a small ranked set and records
 
 `ExecutionEnvironment` (`src/sandbox/execution-environment.ts`) is the only way tools
 touch the world: commands, files, processes, state. It imports nothing. Provider
-identity is data (`descriptor.provider`), not a type. Cloudflare Sandbox will implement
-it in `src/sandbox/cloudflare/` (Phase 3); a `LocalLinuxEnvironment` can follow without
+identity is data (`descriptor.provider`), not a type. `CloudflareSandboxEnvironment`
+(`src/sandbox/cloudflare/`) implements it; a `LocalLinuxEnvironment` can follow without
 touching the runtime.
 
-`tests/execution-environment.test.ts` exports a contract suite that every implementation
-must pass. It currently runs against the test fake.
+The Cloudflare adapter is layered so the vendor SDK stays out of `src/` entirely:
+
+```
+CloudflareSandboxEnvironment      contract → Cloudflare semantics (stdin staging, timeout
+        │                          wrapping, mkdir-before-write, error mapping)
+        ▼
+SandboxClient (port)              the SDK subset we use, as a plain interface
+   ├── HttpSandboxClient          Node side: authenticated JSON over HTTPS (protocol.ts)
+   │        ▼
+   │   worker/src/gateway.ts      routing, bearer auth (fails closed), validation
+   │        ▼
+   └── SdkSandboxClient           worker/src — the ONLY file that calls @cloudflare/sandbox
+            ▼
+       Cloudflare Sandbox         Durable Object → container → isolated Linux
+```
+
+The gateway exists because the Sandbox SDK runs only inside a Worker (ADR-001). Whether
+the runtime itself eventually runs inside that Worker or stays on a separate host is an
+open topology question; both fit behind `SandboxClient`.
+
+`tests/support/execution-environment-contract.ts` exports a contract suite that every
+implementation must pass. It runs against the test fake, against the Cloudflare adapter
+over a fake sandbox client, over the full HTTP chain in-process, and — when credentials
+are present — against a real Cloudflare sandbox (`tests/integration/cloudflare/`).
 
 ## 7. Events
 
@@ -233,16 +255,16 @@ throwing for untrusted input.
 
 ## 9. Phase plan
 
-| Phase | Deliverable                                               | Status |
-| ----- | --------------------------------------------------------- | ------ |
-| 0     | Repository assessment                                     | done   |
-| 1     | Contracts, domain models, event schema, tests             | done   |
-| 2     | Minimal autonomous loop proven with tests                 | done   |
-| 3     | Cloudflare Sandbox `ExecutionEnvironment`                 | next   |
-| 4     | Persistent memory and retrieval                           |        |
-| 5     | Tools, incrementally                                      |        |
-| 6     | Learning loop: experience, decisions, lessons, adaptation |        |
-| 7     | Full event coverage                                       |        |
-| 8     | Dashboard on real events                                  |        |
-| 9     | Living Flame driven by telemetry                          |        |
-| 10    | Cross-run experiment (Run #1 / Run #2)                    |        |
+| Phase | Deliverable                                               | Status                                      |
+| ----- | --------------------------------------------------------- | ------------------------------------------- |
+| 0     | Repository assessment                                     | done                                        |
+| 1     | Contracts, domain models, event schema, tests             | done                                        |
+| 2     | Minimal autonomous loop proven with tests                 | done                                        |
+| 3     | Cloudflare Sandbox `ExecutionEnvironment`                 | built; real-sandbox tests await credentials |
+| 4     | Persistent memory and retrieval                           |                                             |
+| 5     | Tools, incrementally                                      |                                             |
+| 6     | Learning loop: experience, decisions, lessons, adaptation |                                             |
+| 7     | Full event coverage                                       |                                             |
+| 8     | Dashboard on real events                                  |                                             |
+| 9     | Living Flame driven by telemetry                          |                                             |
+| 10    | Cross-run experiment (Run #1 / Run #2)                    |                                             |

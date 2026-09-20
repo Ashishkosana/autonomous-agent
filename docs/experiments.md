@@ -48,6 +48,28 @@ model may give up (`gave_up`, reason recorded); invalid model output fails the r
 **Caveat.** The model is scripted, so this proves the _control loop_, not model
 competence. Real-model behaviour is measured from Phase 4 onward.
 
+## E-002 — Autonomous recovery in a real Cloudflare sandbox (Phase 3, NOT YET RUN)
+
+**Hypothesis.** E-000 reproduces unchanged when `FakeExecutionEnvironment` is replaced
+by `CloudflareSandboxEnvironment` talking to a real Cloudflare sandbox: same scripted
+model, same rule evaluator, same event sequence — but the file is really written and
+really inspected inside isolated Linux.
+
+**Design.** `tests/integration/cloudflare/autonomous-loop.test.ts`. Asserts status
+`completed`, 2 iterations, the `TASK_FAILED → PLAN_REVISED → … → GOAL_COMPLETED` order,
+`descriptor.provider === 'cloudflare-sandbox'` on the environment, and that the final
+file content is readable back from the sandbox itself. The companion suites
+`execution-boundary.test.ts` (TEST 1–7: command, filesystem, code, failure, processes,
+network, isolation evidence), `contract.test.ts` (shared contract suite) and
+`lifecycle.test.ts` (reuse, isolation between ids, destroy, optional idle-stop
+observation) record their raw outputs to `AGENT_SANDBOX_EVIDENCE_DIR`.
+
+**Result.** Not run. The suites skip with `Cloudflare integration NOT RUN — missing
+environment variables …` and fail hard under `AGENT_REQUIRE_CLOUDFLARE=1`
+(`npm run test:cloudflare`). Blocked on user-controlled prerequisites listed in ADR-001
+("Prerequisites for real execution"). Results will be appended here and in ADR-001 once
+they exist; until then, nothing in this repository claims Cloudflare has been exercised.
+
 ## Phase 1 contract-level evidence
 
 Not experiments, but the tests that make later experiments meaningful:
