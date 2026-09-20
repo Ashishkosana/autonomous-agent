@@ -1,0 +1,13 @@
+{
+  // Type-checks the gateway Worker against the Workers runtime. The root
+  // tsconfig deliberately excludes this directory: the Worker is the only place
+  // the Cloudflare SDK and Workers globals are allowed.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["@cloudflare/workers-types"],
+    "lib": ["ES2022"]
+  },
+  "include": ["src/**/*.ts"]
+}

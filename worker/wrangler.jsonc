@@ -1,0 +1,35 @@
+{
+  // Gateway Worker for the Cloudflare Sandbox execution environment (Phase 3).
+  // Deploy:  npm run worker:deploy      (needs CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)
+  // Secret:  npm run worker:secret      (sets AGENT_SANDBOX_GATEWAY_TOKEN from stdin)
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "agent-sandbox-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Pre-built public image, pinned to the SAME version as @cloudflare/sandbox in
+  // package.json (the SDK checks this at runtime). Referencing an image instead
+  // of a Dockerfile means `wrangler deploy` does not need a local Docker daemon.
+  // `wrangler dev` (local emulation) still requires Docker.
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "docker.io/cloudflare/sandbox:0.12.9",
+      "instance_type": "lite",
+      "max_instances": 3,
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
+
+  // Non-secret configuration. Secrets are NEVER placed here.
+  "vars": {
+    "AGENT_SANDBOX_SLEEP_AFTER": "5m",
+    "SANDBOX_LOG_LEVEL": "info",
+    "SANDBOX_LOG_FORMAT": "json",
+  },
+  "observability": { "enabled": true },
+}

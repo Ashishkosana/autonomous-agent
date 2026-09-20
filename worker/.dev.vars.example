@@ -1,0 +1,3 @@
+# Copy to worker/.dev.vars (git-ignored) for `npm run worker:dev` (local emulation; requires Docker).
+# In production this is a Worker secret: `npm run worker:secret` — never a plain var in wrangler.jsonc.
+AGENT_SANDBOX_GATEWAY_TOKEN=replace-with-openssl-rand-hex-32

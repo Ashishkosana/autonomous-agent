@@ -10,15 +10,25 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run format:check && npm run typecheck && npm run test"
+    "test:cloudflare": "AGENT_REQUIRE_CLOUDFLARE=1 vitest run tests/integration/cloudflare",
+    "check": "npm run format:check && npm run typecheck && npm run test",
+    "worker:dev": "wrangler dev -c worker/wrangler.jsonc",
+    "worker:deploy": "wrangler deploy -c worker/wrangler.jsonc",
+    "worker:secret": "wrangler secret put AGENT_SANDBOX_GATEWAY_TOKEN -c worker/wrangler.jsonc",
+    "worker:tail": "wrangler tail -c worker/wrangler.jsonc"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260920.1",
     "@types/node": "^22.20.4",
     "prettier": "^3.9.8",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wrangler": "4.135.0"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "0.12.9"
   }
 }
