@@ -2,7 +2,7 @@
   "name": "autonomous-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Observable autonomous learning agent — V1 architecture skeleton",
+  "description": "Observable autonomous learning agent \u2014 V1 architecture skeleton",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -14,11 +14,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cloudflare": "AGENT_REQUIRE_CLOUDFLARE=1 vitest run tests/integration/cloudflare",
+    "test:local": "node scripts/test-local.mjs",
     "check": "npm run format:check && npm run typecheck && npm run test",
     "worker:dev": "wrangler dev -c worker/wrangler.jsonc",
     "worker:deploy": "wrangler deploy -c worker/wrangler.jsonc",
     "worker:secret": "wrangler secret put AGENT_SANDBOX_GATEWAY_TOKEN -c worker/wrangler.jsonc",
-    "worker:tail": "wrangler tail -c worker/wrangler.jsonc"
+    "worker:tail": "wrangler tail -c worker/wrangler.jsonc",
+    "sandbox:build": "node scripts/sandbox-image.mjs build",
+    "sandbox:clean": "node scripts/sandbox-image.mjs clean",
+    "sandbox:remove": "node scripts/sandbox-image.mjs remove"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260920.1",
