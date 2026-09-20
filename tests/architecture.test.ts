@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
  */
 
 const SRC_ROOT = join(import.meta.dirname, '..', 'src');
+const TESTS_ROOT = join(import.meta.dirname);
+const WORKER_ROOT = join(import.meta.dirname, '..', 'worker', 'src');
 
 function listTsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -81,7 +83,7 @@ describe('architecture rules', () => {
     }
   });
 
-  it('src has no runtime dependencies on third-party packages yet', () => {
+  it('src has no runtime dependencies on third-party packages (the Cloudflare adapter included)', () => {
     for (const file of srcFiles) {
       for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {
         const isRelative = spec.startsWith('.');
@@ -90,6 +92,29 @@ describe('architecture rules', () => {
           isRelative || isNodeBuiltin,
           `${relative(SRC_ROOT, file)} imports third-party module ${spec}`,
         ).toBe(true);
+      }
+    }
+  });
+
+  it('the Cloudflare SDK is imported only by the gateway Worker, never by src or tests', () => {
+    const sdkImporters = [...srcFiles, ...listTsFiles(TESTS_ROOT), ...listTsFiles(WORKER_ROOT)]
+      .filter((file) =>
+        importSpecifiers(readFileSync(file, 'utf8')).some((spec) =>
+          spec.startsWith('@cloudflare/'),
+        ),
+      )
+      .map((file) => relative(join(import.meta.dirname, '..'), file))
+      .sort();
+    expect(sdkImporters).toEqual(['worker/src/index.ts', 'worker/src/sdk-sandbox-client.ts']);
+  });
+
+  it('the gateway Worker only reaches into src/sandbox/cloudflare, never the agent core', () => {
+    for (const file of listTsFiles(WORKER_ROOT)) {
+      for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {
+        if (!spec.includes('/src/')) continue;
+        expect(spec, `${relative(WORKER_ROOT, file)} imports ${spec}`).toMatch(
+          /\/src\/sandbox\/cloudflare\//,
+        );
       }
     }
   });
