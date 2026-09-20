@@ -6,18 +6,18 @@ the decisions that shaped it.
 
 ## 1. Concepts and where they live
 
-| Concept                   | Responsibility                                      | Location                | Status after Phase 2                                    |
-| ------------------------- | --------------------------------------------------- | ----------------------- | ------------------------------------------------------- |
-| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract + instrumentation decorator; provider OPEN     |
-| **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry; real tools in Phase 5              |
-| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters            |
-| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records, working memory impl, store/retrieval contracts |
-| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                 |
-| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                             |
-| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; Cloudflare adapter built, real run pending    |
-| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                   |
-| **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                 |
-| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 9                                                 |
+| Concept                   | Responsibility                                      | Location                | Status after Phase 2                                                                      |
+| ------------------------- | --------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
+| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract + instrumentation decorator; provider OPEN                                       |
+| **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry; real tools in Phase 5                                                |
+| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters                                              |
+| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records, working memory impl, store/retrieval contracts                                   |
+| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                                                   |
+| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                                                               |
+| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred |
+| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                                                     |
+| **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                                                   |
+| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 9                                                                                   |
 
 These are deliberately separate modules. Nothing collapses them into one `Agent` class:
 `AgentRuntime` orchestrates them through their interfaces and owns nothing else.
@@ -208,10 +208,33 @@ The gateway exists because the Sandbox SDK runs only inside a Worker (ADR-001). 
 the runtime itself eventually runs inside that Worker or stays on a separate host is an
 open topology question; both fit behind `SandboxClient`.
 
+`LocalLinuxEnvironment` (`src/sandbox/local/`, ADR-002) is the free development
+implementation: a disposable Docker container from a pinned project image, driven by the
+Docker CLI as the trusted outer controller. It mirrors the Cloudflare layering with an
+engine-shaped port instead of an SDK-shaped one:
+
+```
+LocalLinuxEnvironment             contract → POSIX scripts (container-scripts.ts): timeout
+        │                          wrapping, stdin piping, setsid process groups, error mapping
+        ▼
+ContainerRuntime (port)           run / exec / inspect / stop / rm, as a plain interface
+   ├── DockerCliRuntime           src — the ONLY file that spawns a process (`docker …`, no shell)
+   ├── FakeContainerRuntime       tests — in-memory, for unit tests
+   └── NamespaceContainerRuntime  tests — `unshare -Urm` on a Linux host, validates the scripts only
+            ▼
+       disposable container       non-root, cap-drop ALL, no host mounts, cpu/mem/pid limits
+```
+
+The runtime switches between `FakeExecutionEnvironment`, `LocalLinuxEnvironment` and
+`CloudflareSandboxEnvironment` purely at the composition root; `AgentRuntime`, tools and
+the evaluator import none of them (enforced by `tests/architecture.test.ts`).
+
 `tests/support/execution-environment-contract.ts` exports a contract suite that every
-implementation must pass. It runs against the test fake, against the Cloudflare adapter
-over a fake sandbox client, over the full HTTP chain in-process, and — when credentials
-are present — against a real Cloudflare sandbox (`tests/integration/cloudflare/`).
+implementation must pass. It runs against the test fake; against the Cloudflare adapter
+over a fake sandbox client and over the full HTTP chain in-process; against the local
+adapter over a fake runtime and over Linux namespaces; against real Docker when
+`npm run test:local` runs on a machine with Docker (`tests/integration/local/`); and —
+when credentials exist — against a real Cloudflare sandbox (`tests/integration/cloudflare/`).
 
 ## 7. Events
 
@@ -235,10 +258,10 @@ categories · semantic retrieval requirement · structured events · real-time o
 
 | Decision                             | Where it will plug in                           | Planned ADR |
 | ------------------------------------ | ----------------------------------------------- | ----------- |
-| LLM provider / model                 | `ModelProvider`                                 | ADR-002     |
-| Structured database                  | `MemoryStore`                                   | ADR-003     |
-| Vector / semantic retrieval          | `SemanticIndex`, `MemoryRetriever`              | ADR-004     |
-| Browser automation implementation    | a `Tool` family + possibly environment support  | ADR-005     |
+| LLM provider / model                 | `ModelProvider`                                 | ADR-003     |
+| Structured database                  | `MemoryStore`                                   | ADR-004     |
+| Vector / semantic retrieval          | `SemanticIndex`, `MemoryRetriever`              | ADR-005     |
+| Browser automation implementation    | a `Tool` family + possibly environment support  | ADR-006     |
 | Frontend framework                   | `ui/`                                           | later       |
 | Exact memory schemas                 | `src/memory/records.ts`                         | later       |
 | Growth formula                       | consumer of telemetry + `LessonValidation`      | later       |
@@ -255,16 +278,17 @@ throwing for untrusted input.
 
 ## 9. Phase plan
 
-| Phase | Deliverable                                               | Status                                      |
-| ----- | --------------------------------------------------------- | ------------------------------------------- |
-| 0     | Repository assessment                                     | done                                        |
-| 1     | Contracts, domain models, event schema, tests             | done                                        |
-| 2     | Minimal autonomous loop proven with tests                 | done                                        |
-| 3     | Cloudflare Sandbox `ExecutionEnvironment`                 | built; real-sandbox tests await credentials |
-| 4     | Persistent memory and retrieval                           |                                             |
-| 5     | Tools, incrementally                                      |                                             |
-| 6     | Learning loop: experience, decisions, lessons, adaptation |                                             |
-| 7     | Full event coverage                                       |                                             |
-| 8     | Dashboard on real events                                  |                                             |
-| 9     | Living Flame driven by telemetry                          |                                             |
-| 10    | Cross-run experiment (Run #1 / Run #2)                    |                                             |
+| Phase | Deliverable                                               | Status                                                         |
+| ----- | --------------------------------------------------------- | -------------------------------------------------------------- |
+| 0     | Repository assessment                                     | done                                                           |
+| 1     | Contracts, domain models, event schema, tests             | done                                                           |
+| 2     | Minimal autonomous loop proven with tests                 | done                                                           |
+| 3     | Cloudflare Sandbox `ExecutionEnvironment`                 | built; real verification DEFERRED — requires Workers Paid      |
+| 3B    | Local Docker `ExecutionEnvironment` for free development  | built; awaiting real Docker results from the developer machine |
+| 4     | Persistent memory and retrieval                           |                                                                |
+| 5     | Tools, incrementally                                      |                                                                |
+| 6     | Learning loop: experience, decisions, lessons, adaptation |                                                                |
+| 7     | Full event coverage                                       |                                                                |
+| 8     | Dashboard on real events                                  |                                                                |
+| 9     | Living Flame driven by telemetry                          |                                                                |
+| 10    | Cross-run experiment (Run #1 / Run #2)                    |                                                                |

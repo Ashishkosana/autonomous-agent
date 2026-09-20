@@ -11,18 +11,22 @@ relevant, change strategy because of it, and make that growth observable?
 
 ## Status
 
-**Phase 3 — Cloudflare Sandbox adapter (awaiting real execution).** The repository
-contains the contracts, domain models and event schema from Phase 1, the autonomous
-runtime (`src/agent/runtime/`) from Phase 2, and a `CloudflareSandboxEnvironment` adapter
-plus a gateway Worker (`worker/`) from Phase 3. The adapter and gateway are proven against
-fake clients and the Worker bundles under `wrangler`; the tests that need a real Cloudflare
-sandbox are written but skip until credentials are present — nothing here claims
-Cloudflare has been exercised. There is still no real model provider, no persistence and
-no dashboard. See [`docs/architecture.md`](docs/architecture.md) for the phase plan and
-the list of decisions that are deliberately still open,
-[`docs/experiments.md`](docs/experiments.md) for the evidence so far, and
-[`docs/adr/ADR-001-cloudflare-sandbox.md`](docs/adr/ADR-001-cloudflare-sandbox.md) for the
-Cloudflare findings and the "what is proven, by what" table.
+**Phase 3B — free local isolated Linux execution (awaiting real Docker results).** The
+repository contains the contracts, domain models and event schema from Phase 1, the
+autonomous runtime (`src/agent/runtime/`) from Phase 2, the `CloudflareSandboxEnvironment`
+adapter plus gateway Worker from Phase 3, and — new — `LocalLinuxEnvironment`
+(`src/sandbox/local/`, ADR-002): the same `ExecutionEnvironment` contract implemented by a
+disposable, non-root, capability-dropped Docker container built from a pinned project image.
+
+Evidence status: the runtime loop is proven with fakes (E-000); the local adapter is
+proven with fakes and its shell scripts on a real Linux kernel; the **real Docker suite and
+experiment E-003 run on the developer's Windows + Docker Desktop machine** via
+`npm run test:local` and are recorded in `docs/experiments.md` when they have run; **real
+Cloudflare verification is DEFERRED — requires Workers Paid** (not failed; code stays).
+There is still no real model provider, no persistence and no dashboard. See
+[`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md),
+[`docs/adr/ADR-001-cloudflare-sandbox.md`](docs/adr/ADR-001-cloudflare-sandbox.md) and
+[`docs/adr/ADR-002-local-linux-execution-environment.md`](docs/adr/ADR-002-local-linux-execution-environment.md).
 
 ## Layout
 
@@ -34,6 +38,7 @@ src/
   models/      ModelProvider contract + instrumentation decorator (provider is OPEN)
   sandbox/     ExecutionEnvironment contract
   sandbox/cloudflare/  CloudflareSandboxEnvironment, SandboxClient port, HTTP client, wire protocol (no SDK import)
+  sandbox/local/       LocalLinuxEnvironment, ContainerRuntime port, container scripts, DockerCliRuntime
   storage/     PersistentStorage contract for artifacts/objects
   memory/      working memory (implemented), persistent record kinds, store/retrieval contracts
   evaluation/  Evaluator contract — separate from tool success by design
@@ -43,8 +48,11 @@ tests/         contract, behavioural and architecture-rule tests
 tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering)
 tests/sandbox/ Cloudflare adapter, gateway handler and HTTP client unit tests (fake sandbox client)
 tests/integration/cloudflare/  tests that need a REAL Cloudflare sandbox; skip loudly without credentials
+tests/integration/local/       tests that need REAL Docker; skip loudly by default, fail (never skip) under npm run test:local
 tests/support/ test-only adapters (fake environment, fake sandbox client, in-memory store, scripted model, rule evaluator)
 worker/        Cloudflare gateway Worker — the only place `@cloudflare/sandbox` is imported
+sandbox/local-linux/  Dockerfile for the pinned local sandbox image (agent-sandbox-local)
+scripts/       cross-platform helpers: build/clean the sandbox image, run the local Docker suite
 docs/          architecture, experiments, ADRs
 ```
 
@@ -60,7 +68,26 @@ npm run typecheck    # strict TypeScript, no emit
 npm run format       # prettier --write
 ```
 
-## Running against a real Cloudflare sandbox
+## Running against a real local Linux sandbox (Docker)
+
+Requirements: Docker Desktop (Windows/macOS) or Docker Engine (Linux) running a **Linux**
+engine, and Node.js 22+ to run the tests (on Windows, the WSL Ubuntu distribution with
+Docker Desktop's WSL integration works well — it is only the test runner; the agent's
+sandbox is a separate disposable container, never your WSL distro or your host shell).
+
+```bash
+npm install
+npm run sandbox:build     # docker build → agent-sandbox-local:0.1.0 (node 22, python3, git, curl; non-root)
+npm run test:local        # REAL Docker suite: TEST 1–9, contract, lifecycle, E-003; fails if Docker/image missing
+npm run sandbox:clean     # remove any leftover sandbox containers (label agent.sandbox=1)
+```
+
+The container gets no host mounts, no Docker socket, no host environment, no
+capabilities, no root, `--cpus 2 --memory 2g --pids-limit 256`, a private bridge network
+with outbound Internet only. Details and rationale: ADR-002. Evidence is written to
+`AGENT_SANDBOX_EVIDENCE_DIR` (default `<tmp>/agent-sandbox-evidence`), never into the repo.
+
+## Running against a real Cloudflare sandbox (DEFERRED — requires Workers Paid)
 
 The Sandbox SDK only runs inside a Cloudflare Worker, so the Node-side adapter talks to a
 small gateway Worker (`worker/`) over authenticated HTTPS. Requirements: a Cloudflare

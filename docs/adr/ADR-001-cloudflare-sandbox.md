@@ -1,6 +1,9 @@
 # ADR-001 — Cloudflare Sandbox as the V1 execution environment
 
-Status: Accepted (Phase 3 adapter implemented; real-execution evidence pending user prerequisites)
+Status: Accepted. Adapter, gateway Worker and integration tests implemented (Phase 3).
+**Real Cloudflare verification: DEFERRED — requires Workers Paid** (decision 2026-09-20; not a
+failure). The code stays in the repository and activates unchanged once an account exists.
+Development uses `LocalLinuxEnvironment` (ADR-002) against the same contract meanwhile.
 Date: 2026-09-20 (Phase 1); evidence section updated 2026-09-20 (Phase 3)
 
 ## Problem
@@ -181,7 +184,8 @@ No new events were added: tool execution through this adapter emits the same
 
 Real-execution results will be appended below once the prerequisites in the next
 section are met. Until then, nothing in this repository claims Cloudflare has been
-exercised.
+exercised. **Status 2026-09-20: DEFERRED — requires Workers Paid.** The owner chose not to
+pay for the plan yet; every [NOT YET] row above stays open and none is marked failed.
 
 ### Prerequisites for real execution (user-controlled)
 

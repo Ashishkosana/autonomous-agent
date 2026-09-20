@@ -48,7 +48,47 @@ model may give up (`gave_up`, reason recorded); invalid model output fails the r
 **Caveat.** The model is scripted, so this proves the _control loop_, not model
 competence. Real-model behaviour is measured from Phase 4 onward.
 
-## E-002 — Autonomous recovery in a real Cloudflare sandbox (Phase 3, NOT YET RUN)
+## E-003 — Autonomous recovery in a real local Linux sandbox (Phase 3B, AWAITING DEVELOPER RESULTS)
+
+**Hypothesis.** E-000 reproduces unchanged when `FakeExecutionEnvironment` is replaced by
+`LocalLinuxEnvironment` (ADR-002) talking to a disposable Docker container: same scripted
+model, same rule evaluator, same `AgentRuntime`, same event sequence — but the file is
+really written inside isolated Linux by the non-root `agent` user and really inspected
+there, and the second, corrected action is chosen by the runtime, not by a human.
+
+**Design.** `tests/integration/local/e-003-autonomous-loop.test.ts`, run by
+`npm run test:local` (fails, never skips, without Docker). Asserts: status `completed`,
+usage `{iterations: 2, toolCalls: 2, retries: 1, strategyChanges: 1}`; two `TOOL_COMPLETED`
+and zero `TOOL_FAILED`; verdicts `['failure', 'success']` with `FAILURE_DETECTED.source ===
+'evaluation'`; the artifact read back from the container equals approach B and
+`stat -c %U` reports `agent`; the E-000 causal order `GOAL_RECEIVED → MEMORY_RETRIEVED →
+PLAN_CREATED → TOOL_SELECTED → TOOL_STARTED → TOOL_COMPLETED → EVALUATION_COMPLETED →
+FAILURE_DETECTED → STRATEGY_CHANGED → PLAN_UPDATED → RETRY_STARTED → TOOL_SELECTED →
+TOOL_STARTED → TOOL_COMPLETED → EVALUATION_COMPLETED → LESSON_CREATED → GOAL_COMPLETED`
+with contiguous sequence numbers; 2 decisions, 2 experiences, 1 lesson whose provenance
+reaches the seeded knowledge record.
+
+**No-human-in-the-loop proof.** All scripted turns are fixed before `run()` is called; the
+test timestamps every `requestToolAction` call and asserts both happened between the start
+and return of `run()`, and that `FAILURE_DETECTED`, `PLAN_UPDATED` and `RETRY_STARTED`
+(runtime-sourced events) precede the second `TOOL_SELECTED`.
+
+**Companion suites (same run).** `execution.test.ts` TEST 1–9 (command, filesystem,
+Python, Node, failure, timeout, background process, outbound network, isolation evidence);
+`contract.test.ts` (shared contract suite); `lifecycle.test.ts` (start → use → stop →
+destroy → recreate freshness, two-sandbox isolation, `docker inspect` of limits and
+security options). Raw outputs go to `AGENT_SANDBOX_EVIDENCE_DIR` (default
+`<tmp>/agent-sandbox-evidence`), summarised by `scripts/test-local.mjs`.
+
+**Result.** Not yet run on Docker. The Cursor cloud VM has no Docker engine (by decision);
+the run happens on the developer's Windows 11 + WSL2 + Docker Desktop machine and the
+results are recorded here afterwards. What HAS been executed on a real Linux kernel is
+`tests/sandbox/local-linux-namespace.test.ts` (12 tests, passing): the adapter's shell
+scripts under `unshare -Urm` — this found and fixed two real bugs (dash rejects
+`kill -TERM -- -pgid`; `pgrep -f` matched its own command line) that no fake could have
+found. It is script validation, not isolation or Docker evidence.
+
+## E-002 — Autonomous recovery in a real Cloudflare sandbox (Phase 3, DEFERRED — requires Workers Paid)
 
 **Hypothesis.** E-000 reproduces unchanged when `FakeExecutionEnvironment` is replaced
 by `CloudflareSandboxEnvironment` talking to a real Cloudflare sandbox: same scripted
@@ -64,11 +104,11 @@ network, isolation evidence), `contract.test.ts` (shared contract suite) and
 `lifecycle.test.ts` (reuse, isolation between ids, destroy, optional idle-stop
 observation) record their raw outputs to `AGENT_SANDBOX_EVIDENCE_DIR`.
 
-**Result.** Not run. The suites skip with `Cloudflare integration NOT RUN — missing
+**Result.** Not run — **DEFERRED — requires Workers Paid** (owner decision 2026-09-20;
+not a failure). The suites skip with `Cloudflare integration NOT RUN — missing
 environment variables …` and fail hard under `AGENT_REQUIRE_CLOUDFLARE=1`
-(`npm run test:cloudflare`). Blocked on user-controlled prerequisites listed in ADR-001
-("Prerequisites for real execution"). Results will be appended here and in ADR-001 once
-they exist; until then, nothing in this repository claims Cloudflare has been exercised.
+(`npm run test:cloudflare`). The code and tests remain in place for activation; E-003 is
+the local equivalent. Nothing in this repository claims Cloudflare has been exercised.
 
 ## Phase 1 contract-level evidence
 
