@@ -17,8 +17,14 @@ import type { Provenance } from '../domain/provenance.js';
  *
  * The four logical memory categories are locked: working, knowledge,
  * experience, decision. Working memory is run-scoped and lives in
- * `working.ts`. The other three persist across runs and are modelled here,
- * together with `lesson`, the persistent output of the learning step.
+ * `working.ts`. The other three persist across runs and are modelled here.
+ *
+ * `lesson` is NOT a fifth category. A LessonRecord is a derived persistent
+ * learning record produced by the learner from evaluated outcomes; it is
+ * stored under the same store/retrieval machinery (hence it appears in
+ * `PersistentMemoryKind`, a storage-level discriminator) and links back to
+ * the knowledge, experience, decisions, evaluations, observations, actions,
+ * strategies and retrievals it was derived from.
  *
  * Field-level schemas below are OPEN and expected to change; the identifiers
  * and provenance fields are the parts we commit to keeping stable.

@@ -98,10 +98,15 @@ Four logical categories are locked:
   `retryOf`, `changedApproach`.
 - **Decision** — why a choice was made: options, evidence, reason, confidence, outcome.
 
-`LessonRecord` is the persistent output of learning. It is stored alongside the three
-persistent categories as kind `lesson` and links back to the experiences/decisions/
-evaluations it was derived from. Whether lessons stay a separate kind or fold into
-another category is an OPEN schema question; the identifiers are the stable part.
+**Lessons are not a fifth category.** `LessonRecord` is a _derived persistent learning
+record_: the output of the learning step, not a place where raw experience is stored. It
+is persisted as record kind `lesson` purely so it can be stored, indexed and retrieved
+through the same `MemoryStore`/`MemoryRetriever` machinery, and it exists only by virtue
+of the records it links to — knowledge, experience, decisions, evaluations, observations,
+actions, strategies and retrievals — via its `provenance`. The logical memory model
+remains exactly four categories: working, knowledge, experience, decision. The
+`PersistentMemoryKind` enumeration is a storage-level discriminator and should not be
+read as the category list.
 
 Lesson records carry `LessonValidation` counters (retrieved / applied / confirmed /
 contradicted). These are raw inputs for a future growth formula, not a growth formula.
