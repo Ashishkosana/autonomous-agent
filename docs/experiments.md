@@ -24,6 +24,30 @@ a control run with memory disabled.
 
 **Status.** Not yet runnable — requires Phases 2–7.
 
+## E-000 — Autonomous recovery inside one run (Phase 2, passing)
+
+**Hypothesis.** Given one goal and no further human input, the runtime detects an
+inadequate result that the tool reported as successful, revises its strategy, retries
+with a different action, and records what it learned — deterministically.
+
+**Design.** `tests/runtime/autonomous-loop.test.ts`. The "model" is a scripted provider
+(plan → approach A → strategy revision → approach B). The evaluator is rule-based and
+inspects the artifact in a fake sandbox. The tool succeeds both times; only the evaluator
+distinguishes A from B.
+
+**Result.** 29 events, status `completed`, 2 iterations, 1 retry, 1 strategy change,
+5 memory writes (2 decisions, 2 experiences, 1 lesson). The lesson's provenance reaches
+back to the seeded knowledge record through retrieval → plan → decision → action →
+observation → evaluation, verified by id. Timeline reproduced in the Phase 2 report.
+
+**Control cases** (`tests/runtime/termination.test.ts`): a run limit stops a model that
+never improves (`limit_reached`, no `GOAL_COMPLETED`, no tool call after the limit); a
+model may give up (`gave_up`, reason recorded); invalid model output fails the run
+(`failed`, cause `unrecoverable`); a premature `finish` claim is rejected by the evaluator.
+
+**Caveat.** The model is scripted, so this proves the _control loop_, not model
+competence. Real-model behaviour is measured from Phase 4 onward.
+
 ## Phase 1 contract-level evidence
 
 Not experiments, but the tests that make later experiments meaningful:

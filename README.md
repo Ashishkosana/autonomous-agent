@@ -11,11 +11,14 @@ relevant, change strategy because of it, and make that growth observable?
 
 ## Status
 
-**Phase 1 — architecture skeleton.** This repository currently contains contracts, domain
-models, an event schema, and tests. There is no autonomous loop yet, no model provider,
-no Cloudflare integration, no dashboard. Those arrive in later phases; see
-[`docs/architecture.md`](docs/architecture.md) for the phase plan and the list of
-decisions that are deliberately still open.
+**Phase 2 — minimal autonomous loop.** The repository contains the contracts, domain
+models and event schema from Phase 1 plus a working autonomous runtime
+(`src/agent/runtime/`) proven against deterministic test adapters: it plans, acts,
+evaluates, detects failure, revises strategy, retries, learns and stops on its own. There
+is still no real model provider, no Cloudflare integration, no persistence and no
+dashboard. See [`docs/architecture.md`](docs/architecture.md) for the phase plan and the
+list of decisions that are deliberately still open, and
+[`docs/experiments.md`](docs/experiments.md) for the evidence so far.
 
 ## Layout
 
@@ -24,14 +27,16 @@ src/
   domain/      identifiers, provenance, goal, plan, action, observation, artifact, run
   events/      structured event schema, correlation fields, sink/source contracts
   tools/       Tool contract, ToolRegistry, structured ToolResult
-  models/      ModelProvider contract (provider is an OPEN decision)
+  models/      ModelProvider contract + instrumentation decorator (provider is OPEN)
   sandbox/     ExecutionEnvironment contract (Cloudflare Sandbox implements it in Phase 3)
   storage/     PersistentStorage contract for artifacts/objects
-  memory/      working memory, persistent record kinds, MemoryStore, retrieval contracts
+  memory/      working memory (implemented), persistent record kinds, store/retrieval contracts
   evaluation/  Evaluator contract — separate from tool success by design
-  agent/       Planner / ActionSelector / Executor / Learner contracts (runtime in Phase 2)
+  agent/       Planner / ActionSelector / Executor / Learner contracts and implementations
+  agent/runtime/  AgentRuntime loop, RunSession, RunUsageTracker, composition root
 tests/         contract, behavioural and architecture-rule tests
-tests/support/ test-only adapters (fake environment, in-memory store, scripted model)
+tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering)
+tests/support/ test-only adapters (fake environment, in-memory store, scripted model, rule evaluator)
 docs/          architecture, experiments, ADRs
 ```
 

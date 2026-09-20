@@ -6,40 +6,86 @@ the decisions that shaped it.
 
 ## 1. Concepts and where they live
 
-| Concept                   | Responsibility                                      | Location                             | Phase 1 status                          |
-| ------------------------- | --------------------------------------------------- | ------------------------------------ | --------------------------------------- |
-| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`                        | Contract only; provider OPEN            |
-| **Capability**            | What the agent can do to the world                  | `src/tools/`                         | Contract + registry; no real tools yet  |
-| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/`                         | Component contracts; loop in Phase 2    |
-| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`                        | Records + store/retrieval contracts     |
-| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`                    | Contract; strategy OPEN                 |
-| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/contracts.ts` (`Learner`) | Contract only                           |
-| **Execution environment** | Where actions physically run                        | `src/sandbox/`                       | Contract; Cloudflare impl in Phase 3    |
-| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`                       | Contract; backend OPEN (R2 candidate)   |
-| **Observability**         | Structured events describing every meaningful step  | `src/events/`                        | Schema + factory + sink/source contract |
-| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created)              | Phase 9                                 |
+| Concept                   | Responsibility                                      | Location                | Status after Phase 2                                    |
+| ------------------------- | --------------------------------------------------- | ----------------------- | ------------------------------------------------------- |
+| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract + instrumentation decorator; provider OPEN     |
+| **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry; real tools in Phase 5              |
+| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters            |
+| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records, working memory impl, store/retrieval contracts |
+| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                 |
+| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                             |
+| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; Cloudflare impl in Phase 3                    |
+| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                   |
+| **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                 |
+| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 9                                                 |
 
-These are deliberately separate modules. Nothing is allowed to collapse them into one
-`Agent` class: the runtime (Phase 2) will orchestrate them through their interfaces.
+These are deliberately separate modules. Nothing collapses them into one `Agent` class:
+`AgentRuntime` orchestrates them through their interfaces and owns nothing else.
 
-## 2. The loop the runtime will implement (Phase 2)
+## 2. The runtime loop (implemented in Phase 2)
+
+`src/agent/runtime/agent-runtime.ts`:
 
 ```
-receive goal                          → GOAL_RECEIVED
-while run not finished and limits not reached:
-    retrieve relevant memory          → MEMORY_SEARCH_STARTED / MEMORY_RETRIEVED
-    create or revise plan             → PLAN_CREATED / PLAN_UPDATED / STRATEGY_CHANGED
-    select next action (+ decision)   → DECISION_CREATED / TOOL_SELECTED
-    execute action                    → TOOL_STARTED / COMMAND_* / FILE_* / TOOL_COMPLETED|FAILED
-    observe result
-    evaluate result                   → EVALUATION_COMPLETED
-    if failure:                       → FAILURE_DETECTED
-        diagnose, revise strategy     → STRATEGY_CHANGED, RETRY_STARTED
-    learn (experience + lessons)      → MEMORY_WRITTEN, LESSON_CREATED
-finish                                → GOAL_COMPLETED | GOAL_FAILED | RUN_LIMIT_REACHED
+receive goal                            → GOAL_RECEIVED
+retrieve relevant memory                → MEMORY_SEARCH_STARTED / MEMORY_RETRIEVED
+create plan                             → PLAN_CREATED
+loop:
+    stop if any RunLimit is reached     → RUN_LIMIT_REACHED            (status limit_reached)
+    pick next task; none left → done    → GOAL_COMPLETED               (status completed)
+    ask selector for next step
+        give_up                         → GOAL_FAILED cause=gave_up    (status gave_up)
+        finish → goal-level evaluation  → EVALUATION_COMPLETED, then completed or failure path
+        act:                            → DECISION_CREATED, [RETRY_STARTED], TOOL_SELECTED
+            execute                     → TOOL_STARTED, TOOL_COMPLETED | TOOL_FAILED
+            evaluate                    → EVALUATION_COMPLETED
+            learn + write memory        → MEMORY_WRITTEN (decision, experience), [LESSON_CREATED, MEMORY_WRITTEN]
+            success → mark task complete
+            failure                     → FAILURE_DETECTED
+                planner revises         → [STRATEGY_CHANGED], PLAN_UPDATED
+                (next iteration retries the same task under the revised plan)
+unrecoverable error anywhere            → GOAL_FAILED cause=unrecoverable (status failed)
 ```
 
-Each arrow on the right is an event type declared in `src/events/contracts.ts`.
+Model calls made by any component additionally emit `MODEL_CALL_COMPLETED` via
+`InstrumentedModelProvider`.
+
+### Runtime components
+
+| Component                   | File                                  | Responsibility                                                                                                     |
+| --------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `AgentRuntime`              | `src/agent/runtime/agent-runtime.ts`  | The loop above. Owns orchestration, task selection, termination, memory writes and all runtime-level events.       |
+| `RunSession`                | `src/agent/runtime/run-session.ts`    | Per-run ids, clock, goal, event factory + sink, usage tracker, working memory, run state. No orchestration.        |
+| `RunUsageTracker`           | `src/agent/runtime/run-usage.ts`      | `RunUsage` counters and `breach()` — the first `RunLimit` reached.                                                 |
+| `plan-tasks.ts`             | `src/agent/runtime/plan-tasks.ts`     | Pure helpers: next runnable task, status updates.                                                                  |
+| `createAutonomousRun`       | `src/agent/runtime/create-run.ts`     | Composition root: wires defaults around caller-supplied model, tools, environment, evaluator, store and retriever. |
+| `ModelPlanner`              | `src/agent/planner.ts`                | Structured plan / revision requests to the model; validates output; builds `Plan` with honest `informedBy`.        |
+| `ModelActionSelector`       | `src/agent/action-selector.ts`        | Tool-action request to the model; turns the proposal into `Action` + `DecisionRecord`, or finish / give up.        |
+| `ToolExecutor`              | `src/agent/executor.ts`               | Runs one `Action` through the registry against the environment; emits tool events; returns an `Observation`.       |
+| `OutcomeLearner`            | `src/agent/learner.ts`                | Rule-based: one `ExperienceRecord` per attempt; a `LessonRecord` only from a failure → success contrast.           |
+| `InstrumentedModelProvider` | `src/models/instrumented-provider.ts` | Decorates any `ModelProvider` to report a `ModelCallRecord` per call.                                              |
+| `RunWorkingMemory`          | `src/memory/working.ts`               | Process-local working memory for the run.                                                                          |
+
+### Termination conditions (exhaustive)
+
+| Condition                                                      | Event                                 | `RunStatus`     |
+| -------------------------------------------------------------- | ------------------------------------- | --------------- |
+| Every plan task is `completed` or `skipped`                    | `GOAL_COMPLETED`                      | `completed`     |
+| A `finish` claim passes goal-level evaluation                  | `GOAL_COMPLETED`                      | `completed`     |
+| Selector returns `give_up`                                     | `GOAL_FAILED` (cause `gave_up`)       | `gave_up`       |
+| Any `RunLimit` reached, checked at the head of every iteration | `RUN_LIMIT_REACHED`                   | `limit_reached` |
+| Planner/selector/evaluator throws (e.g. invalid model output)  | `GOAL_FAILED` (cause `unrecoverable`) | `failed`        |
+
+There is no other way out of the loop; every iteration either terminates or consumes an
+iteration count, so the `maxIterations` limit bounds the run unconditionally.
+
+### Trust boundaries inside the loop
+
+- The model **proposes** plans, revisions and tool calls. It never executes anything and
+  never decides success: a `finish` proposal is checked by the evaluator.
+- The evaluator judges from evidence (artifact inspection, command checks, rules). Its
+  verdict, not `ToolResult.status`, drives task completion and failure handling.
+- The runtime **decides** whether to continue, retry or stop, and it alone writes memory.
 
 ## 3. Data flow for one action
 
@@ -81,12 +127,31 @@ retrieved memory record
                   → LessonRecord.provenance
 ```
 
-`tests/provenance.test.ts` constructs the whole chain and walks it in both directions.
-This is what will let the dashboard say, truthfully, "this plan used experience from run
-N" and "this lesson came from this failure".
+`tests/provenance.test.ts` constructs the whole chain by hand and walks it in both
+directions; `tests/runtime/autonomous-loop.test.ts` does the same against records the
+runtime actually wrote. This is what lets the dashboard say, truthfully, "this plan used
+experience from run N" and "this lesson came from this failure".
 
-Events mirror the same identifiers in `EventCorrelation`, so the live stream and the
-stored records can be joined without a separate index.
+### How provenance travels through the runtime
+
+Links are recorded only where the relationship really occurred:
+
+| Record             | Field                                                     | Set from                                                                                                 |
+| ------------------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `Plan`             | `informedBy.retrievalIds`                                 | Retrievals that returned ≥ 1 hit and were rendered into the planning prompt                              |
+| `Plan`             | `informedBy.memoryRecordIds`                              | Record ids the model cited **∩** records actually presented (fabricated ids are dropped)                 |
+| `Plan` (revision)  | `informedBy.planIds / evaluationIds`                      | The plan it replaces and the evaluation(s) that triggered revision                                       |
+| `DecisionRecord`   | `provenance`, `evidence`                                  | Plan id; presented retrievals/records; previous attempts' action + evaluation ids for this task          |
+| `Action`           | `planId`, `decisionId`, `retryOf`, `derivedFrom`          | The plan/decision that produced it; the action it retries                                                |
+| `Observation`      | `actionId`                                                | The executed action                                                                                      |
+| `EvaluationResult` | `derivedFrom`                                             | Observation ids inspected and the action judged (evaluator-supplied)                                     |
+| `ExperienceRecord` | `actionId`, `observationId`, `evaluationId`, `provenance` | The attempt, plus the decision's provenance                                                              |
+| `LessonRecord`     | `provenance`                                              | Union of every attempt's action/observation/evaluation/decision/plan ids and the decisions' memory links |
+
+Events carry the same ids in `EventCorrelation`. `MEMORY_RETRIEVED.recordIds`,
+`PLAN_CREATED.informedBy*`, `RETRY_STARTED.retryOfActionId` and
+`LESSON_CREATED.derivedFromEvaluationIds` make the chain reconstructable from the stream
+alone, and the live stream and the stored records can be joined without a separate index.
 
 ## 5. Memory
 
@@ -172,8 +237,8 @@ throwing for untrusted input.
 | ----- | --------------------------------------------------------- | ------ |
 | 0     | Repository assessment                                     | done   |
 | 1     | Contracts, domain models, event schema, tests             | done   |
-| 2     | Minimal autonomous loop proven with tests                 | next   |
-| 3     | Cloudflare Sandbox `ExecutionEnvironment`                 |        |
+| 2     | Minimal autonomous loop proven with tests                 | done   |
+| 3     | Cloudflare Sandbox `ExecutionEnvironment`                 | next   |
 | 4     | Persistent memory and retrieval                           |        |
 | 5     | Tools, incrementally                                      |        |
 | 6     | Learning loop: experience, decisions, lessons, adaptation |        |
