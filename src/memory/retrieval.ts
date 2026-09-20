@@ -11,6 +11,8 @@ import type { PersistentMemoryKind, PersistentMemoryRecord } from './records.js'
 export type RetrievalSignal = 'metadata' | 'keyword' | 'semantic';
 
 export interface RetrievalQuery {
+  /** Assigned by the caller so start/finish events can be correlated before results exist. */
+  readonly retrievalId: RetrievalId;
   readonly text: string;
   readonly kinds: readonly PersistentMemoryKind[];
   readonly tags?: readonly string[];
@@ -26,6 +28,7 @@ export interface RetrievalHit {
 }
 
 export interface RetrievalResult {
+  /** Echoes `query.retrievalId`. */
   readonly retrievalId: RetrievalId;
   readonly query: RetrievalQuery;
   readonly hits: readonly RetrievalHit[];

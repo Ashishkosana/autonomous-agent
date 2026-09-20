@@ -4,6 +4,7 @@ import {
   asLessonId,
   asMemoryRecordId,
   asObservationId,
+  asRetrievalId,
   asRunId,
   asGoalId,
 } from '../src/domain/ids.js';
@@ -14,7 +15,7 @@ import type {
   LessonRecord,
 } from '../src/memory/records.js';
 import { PERSISTENT_MEMORY_KINDS, UNVALIDATED } from '../src/memory/records.js';
-import { FixedClock, SequentialIdGenerator } from './support/deterministic.js';
+import { FixedClock } from './support/deterministic.js';
 import { makePlan } from './support/fixtures.js';
 import { InMemoryMemoryStore } from './support/in-memory-memory-store.js';
 import { KeywordOnlyRetriever } from './support/keyword-only-retriever.js';
@@ -130,13 +131,10 @@ describe('memory records and store', () => {
 describe('behavioral: previous experience is retrievable for a related problem', () => {
   it('retrieves the failed and successful approaches plus the lesson, not unrelated knowledge', async () => {
     const store = await seededStore();
-    const retriever = new KeywordOnlyRetriever(
-      store,
-      new SequentialIdGenerator(),
-      new FixedClock(),
-    );
+    const retriever = new KeywordOnlyRetriever(store, new FixedClock());
 
     const result = await retriever.retrieve({
+      retrievalId: asRetrievalId('ret-1'),
       text: 'install a python library to parse pdf files in the sandbox',
       kinds: ['experience', 'decision', 'lesson'],
       limit: 5,
@@ -156,12 +154,9 @@ describe('behavioral: previous experience is retrievable for a related problem',
 
   it('a plan can cite the retrieval and records that shaped it', async () => {
     const store = await seededStore();
-    const retriever = new KeywordOnlyRetriever(
-      store,
-      new SequentialIdGenerator(),
-      new FixedClock(),
-    );
+    const retriever = new KeywordOnlyRetriever(store, new FixedClock());
     const retrieval = await retriever.retrieve({
+      retrievalId: asRetrievalId('ret-1'),
       text: 'install python pdf library',
       kinds: ['experience', 'lesson'],
       limit: 3,

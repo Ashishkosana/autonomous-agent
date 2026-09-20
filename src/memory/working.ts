@@ -34,3 +34,65 @@ export interface WorkingMemory {
   addNote(note: string): void;
   snapshot(): WorkingMemorySnapshot;
 }
+
+/**
+ * The only working-memory implementation: process-local state that lives
+ * exactly as long as the run. This is not a test adapter — working memory is
+ * ephemeral by definition, so an in-process structure *is* the design.
+ */
+export class RunWorkingMemory implements WorkingMemory {
+  readonly runId: RunId;
+  private plan: Plan | undefined;
+  private currentTaskId: TaskId | undefined;
+  private readonly observations: Observation[] = [];
+  private readonly retrievals: RetrievalResult[] = [];
+  private readonly notes: string[] = [];
+
+  constructor(private readonly goal: Goal) {
+    this.runId = goal.runId;
+  }
+
+  getGoal(): Goal {
+    return this.goal;
+  }
+
+  getPlan(): Plan | undefined {
+    return this.plan;
+  }
+
+  setPlan(plan: Plan): void {
+    this.plan = plan;
+  }
+
+  getCurrentTaskId(): TaskId | undefined {
+    return this.currentTaskId;
+  }
+
+  setCurrentTaskId(taskId: TaskId | undefined): void {
+    this.currentTaskId = taskId;
+  }
+
+  addObservation(observation: Observation): void {
+    this.observations.push(observation);
+  }
+
+  addRetrieval(result: RetrievalResult): void {
+    this.retrievals.push(result);
+  }
+
+  addNote(note: string): void {
+    this.notes.push(note);
+  }
+
+  snapshot(): WorkingMemorySnapshot {
+    return {
+      runId: this.runId,
+      goal: this.goal,
+      observations: [...this.observations],
+      retrievals: [...this.retrievals],
+      notes: [...this.notes],
+      ...(this.plan ? { plan: this.plan } : {}),
+      ...(this.currentTaskId ? { currentTaskId: this.currentTaskId } : {}),
+    };
+  }
+}

@@ -1,4 +1,4 @@
-import { asRetrievalId, type Clock, type IdGenerator } from '../../src/domain/ids.js';
+import type { Clock } from '../../src/domain/ids.js';
 import type { PersistentMemoryRecord } from '../../src/memory/records.js';
 import type {
   MemoryRetriever,
@@ -16,7 +16,6 @@ import type { MemoryStore } from '../../src/memory/store.js';
 export class KeywordOnlyRetriever implements MemoryRetriever {
   constructor(
     private readonly store: MemoryStore,
-    private readonly ids: IdGenerator,
     private readonly clock: Clock,
   ) {}
 
@@ -37,7 +36,7 @@ export class KeywordOnlyRetriever implements MemoryRetriever {
     hits.sort((a, b) => b.score - a.score);
 
     return {
-      retrievalId: asRetrievalId(this.ids.next('ret')),
+      retrievalId: query.retrievalId,
       query,
       hits: hits.slice(0, query.limit),
       signalsUsed: ['metadata', 'keyword'],
