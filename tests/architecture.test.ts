@@ -108,6 +108,33 @@ describe('architecture rules', () => {
     expect(sdkImporters).toEqual(['worker/src/index.ts', 'worker/src/sdk-sandbox-client.ts']);
   });
 
+  it('only the Docker CLI runtime spawns processes; the local adapter itself is engine-agnostic', () => {
+    const spawners = srcFiles
+      .filter((file) =>
+        importSpecifiers(readFileSync(file, 'utf8')).some((spec) => spec === 'node:child_process'),
+      )
+      .map((file) => relative(SRC_ROOT, file).split(/[\\/]/).join('/'));
+    expect(spawners).toEqual(['sandbox/local/docker-cli-runtime.ts']);
+    const adapter = readFileSync(
+      join(SRC_ROOT, 'sandbox', 'local', 'local-linux-environment.ts'),
+      'utf8',
+    );
+    expect(adapter).not.toMatch(/docker/i);
+  });
+
+  it('the agent core never depends on a concrete execution environment', () => {
+    for (const file of srcFiles) {
+      const rel = relative(SRC_ROOT, file);
+      const top = rel.split(/[\\/]/)[0] ?? '';
+      if (!CORE_DIRS.includes(top)) continue;
+      for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {
+        expect(spec, `${rel} imports a concrete environment ${spec}`).not.toMatch(
+          /sandbox\/(cloudflare|local)\//,
+        );
+      }
+    }
+  });
+
   it('the gateway Worker only reaches into src/sandbox/cloudflare, never the agent core', () => {
     for (const file of listTsFiles(WORKER_ROOT)) {
       for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {

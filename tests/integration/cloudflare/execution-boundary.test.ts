@@ -177,14 +177,18 @@ describeCloudflare('Cloudflare Sandbox · execution boundary', () => {
     const running = await env.getState();
     const tracked = running.processes.find((p) => p.processId === handle.processId);
     expect(tracked?.status).toBe('running');
-    const psBefore = await env.runCommand(`pgrep -f '${marker}' | wc -l`);
+    const psBefore = await env.runCommand(
+      `pgrep -f '[${marker.slice(0, 1)}]${marker.slice(1)}' | wc -l`,
+    );
     expect(Number(psBefore.stdout.trim())).toBeGreaterThan(0);
 
     await env.stopProcess(handle.processId);
     // Give the sandbox a moment to reap; poll briefly rather than sleep blindly.
     let psAfter = '';
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      psAfter = (await env.runCommand(`pgrep -f '${marker}' | wc -l`)).stdout.trim();
+      psAfter = (
+        await env.runCommand(`pgrep -f '[${marker.slice(0, 1)}]${marker.slice(1)}' | wc -l`)
+      ).stdout.trim();
       if (psAfter === '0') break;
       await new Promise((r) => setTimeout(r, 500));
     }

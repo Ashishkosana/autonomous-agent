@@ -1,9 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, vi } from 'vitest';
 import { CloudflareSandboxEnvironment } from '../../../src/sandbox/cloudflare/cloudflare-sandbox-environment.js';
 import { readGatewayConfig } from '../../../src/sandbox/cloudflare/config.js';
 import { HttpSandboxClient } from '../../../src/sandbox/cloudflare/http-sandbox-client.js';
+import { recordEvidence as record, uniqueId } from '../../support/evidence.js';
 
 /**
  * Gate for tests that need REAL Cloudflare infrastructure (a deployed gateway
@@ -40,9 +39,7 @@ export function configureIntegrationTimeouts(): void {
 }
 
 export function uniqueSandboxId(prefix: string): string {
-  const stamp = Date.now().toString(36);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${stamp}-${random}`.toLowerCase();
+  return uniqueId(prefix);
 }
 
 export interface RealSandbox {
@@ -58,24 +55,7 @@ export function realSandbox(sandboxId: string): RealSandbox {
   return { sandboxId, client, environment: new CloudflareSandboxEnvironment(client) };
 }
 
-/**
- * Evidence from real runs is written OUTSIDE the repository (to
- * AGENT_SANDBOX_EVIDENCE_DIR, or /tmp/agent-sandbox-evidence) so it can be
- * reviewed and summarised into docs without committing raw dumps.
- */
+/** Evidence lives outside the repository; see tests/support/evidence.ts. */
 export function recordEvidence(name: string, data: unknown): void {
-  const dir = process.env['AGENT_SANDBOX_EVIDENCE_DIR'] ?? '/tmp/agent-sandbox-evidence';
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, `${name}.json`);
-  writeFileSync(
-    file,
-    JSON.stringify({ recordedAt: new Date().toISOString(), ...asObject(data) }, null, 2),
-  );
-  console.info(`[evidence] ${name} → ${file}`);
-}
-
-function asObject(data: unknown): Record<string, unknown> {
-  return typeof data === 'object' && data !== null && !Array.isArray(data)
-    ? (data as Record<string, unknown>)
-    : { value: data };
+  record(`cloudflare-${name}`, data);
 }
