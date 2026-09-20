@@ -48,7 +48,7 @@ model may give up (`gave_up`, reason recorded); invalid model output fails the r
 **Caveat.** The model is scripted, so this proves the _control loop_, not model
 competence. Real-model behaviour is measured from Phase 4 onward.
 
-## E-003 — Autonomous recovery in a real local Linux sandbox (Phase 3B, AWAITING DEVELOPER RESULTS)
+## E-003 — Autonomous recovery in a real local Linux sandbox (Phase 3B, PASSED on the developer machine)
 
 **Hypothesis.** E-000 reproduces unchanged when `FakeExecutionEnvironment` is replaced by
 `LocalLinuxEnvironment` (ADR-002) talking to a disposable Docker container: same scripted
@@ -80,13 +80,35 @@ destroy → recreate freshness, two-sandbox isolation, `docker inspect` of limit
 security options). Raw outputs go to `AGENT_SANDBOX_EVIDENCE_DIR` (default
 `<tmp>/agent-sandbox-evidence`), summarised by `scripts/test-local.mjs`.
 
-**Result.** Not yet run on Docker. The Cursor cloud VM has no Docker engine (by decision);
-the run happens on the developer's Windows 11 + WSL2 + Docker Desktop machine and the
-results are recorded here afterwards. What HAS been executed on a real Linux kernel is
-`tests/sandbox/local-linux-namespace.test.ts` (12 tests, passing): the adapter's shell
-scripts under `unshare -Urm` — this found and fixed two real bugs (dash rejects
+**Result (2026-09-20, developer machine).** `npm run test:local` executed on the
+developer's actual Windows 11 + WSL2 + Docker Desktop environment against
+`agent-sandbox-local:0.1.0`:
+
+```
+25 passed
+0 failed
+0 skipped
+Exit code 0
+```
+
+The 25 tests are the four Docker-gated suites in `tests/integration/local/`:
+`execution.test.ts` (9 — TEST 1–9), `contract.test.ts` (6 — shared contract suite),
+`e-003-autonomous-loop.test.ts` (6 — this experiment) and `lifecycle.test.ts` (4). Every
+assertion listed under **Design** above therefore held on a real disposable container:
+the runtime detected the inadequate artifact, changed strategy, retried with the corrected
+approach and completed, with the file really written by the non-root `agent` user inside
+isolated Linux and no human choosing the second action. `LocalLinuxEnvironment` is the
+**verified V1 execution environment**. The Cursor cloud VM that authored the code has no
+Docker engine (by decision), so the evidence comes from the developer machine, reported
+by the project owner; raw JSON evidence lives in that machine's
+`AGENT_SANDBOX_EVIDENCE_DIR`, outside the repository.
+
+Independently, `tests/sandbox/local-linux-namespace.test.ts` (12 tests, passing in the
+cloud VM) exercised the adapter's shell scripts on a real Linux kernel under
+`unshare -Urm` before the Docker run; that found and fixed two real bugs (dash rejects
 `kill -TERM -- -pgid`; `pgrep -f` matched its own command line) that no fake could have
-found. It is script validation, not isolation or Docker evidence.
+found. It is script validation, not isolation evidence — the isolation evidence is the
+Docker run above.
 
 ## E-002 — Autonomous recovery in a real Cloudflare sandbox (Phase 3, DEFERRED — requires Workers Paid)
 

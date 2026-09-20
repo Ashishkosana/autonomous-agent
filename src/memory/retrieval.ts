@@ -45,7 +45,7 @@ export interface MemoryRetriever {
 
 /**
  * Meaning-based lookup. Embedding model and vector store are OPEN
- * (ADR-004, not yet written). Retrievers compose this with the MemoryStore.
+ * (ADR-005, Phase 7). Retrievers compose this with the MemoryStore.
  */
 export interface SemanticMatch {
   readonly recordId: MemoryRecordId;

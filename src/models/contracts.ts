@@ -5,8 +5,8 @@ import type { ToolDescriptor } from '../tools/contracts.js';
 /**
  * The model layer is the agent's *intelligence*: it proposes plans, actions,
  * judgements and lessons. It has no side effects; every proposal passes
- * through the runtime. The concrete provider is an OPEN decision (ADR-002,
- * not yet written). Nothing in the runtime may depend on a vendor SDK.
+ * through the runtime. The concrete provider is a composition-root choice
+ * (ADR-003). Nothing in the runtime may depend on a vendor SDK.
  */
 
 export type ModelRole = 'system' | 'user' | 'assistant' | 'tool';

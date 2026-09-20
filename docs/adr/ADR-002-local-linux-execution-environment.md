@@ -1,6 +1,9 @@
 # ADR-002 — Local Linux container as the development execution environment
 
-**Status:** accepted (Phase 3B) · **Date:** 2026-09-20 · **Supersedes:** nothing —
+**Status:** accepted (Phase 3B); **verified on real Docker 2026-09-20** — `npm run test:local`
+on the developer's Windows 11 + WSL2 + Docker Desktop machine: 25 passed, 0 failed,
+0 skipped, exit code 0 (see `docs/experiments.md`, E-003). `LocalLinuxEnvironment` is the
+verified V1 execution environment. · **Date:** 2026-09-20 · **Supersedes:** nothing —
 complements ADR-001.
 
 ## Problem
@@ -136,12 +139,13 @@ remain ready for activation.
 | --------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Unit, `FakeContainerRuntime`                              | `tests/sandbox/local-linux-environment.test.ts`      | contract mapping, argv/flags, mount policy, error mapping, lifecycle states                                                      |
 | Real kernel, no engine (`unshare -Urm`, Linux CI/VM only) | `tests/sandbox/local-linux-namespace.test.ts`        | the shell scripts are correct POSIX/GNU (found and fixed `dash` `kill -- -pgid` and `pgrep` self-match bugs) — **not** isolation |
-| Real Docker                                               | `tests/integration/local/*` via `npm run test:local` | TEST 1–9, contract suite, lifecycle, E-003; fails (never skips) without Docker                                                   |
+| Real Docker                                               | `tests/integration/local/*` via `npm run test:local` | TEST 1–9, contract suite, lifecycle, E-003; fails (never skips) without Docker — **25/25 passed on the developer machine**       |
 
 ## Known limitations
 
 - The Cursor cloud VM that authored this ADR has no Docker; Docker-level claims are
-  proven only when `npm run test:local` runs on a machine with Docker (the developer's).
+  proven by `npm run test:local` on a machine with Docker. That run happened on the
+  developer's machine (25/25, see Status); the raw evidence files stay on that machine.
 - Non-root user cannot `apt-get`; extra system packages require an image change.
 - `--memory-swap` may be ignored with a warning on kernels without swap accounting;
   `docker inspect` in the lifecycle test reports the effective value.

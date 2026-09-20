@@ -8,7 +8,7 @@ import type {
 /**
  * Structured storage for persistent memory records. Backs the "metadata
  * filtering" stage of retrieval and is the source of truth for every record.
- * The concrete database is an OPEN decision (ADR-003, not yet written).
+ * The concrete database is an OPEN decision (ADR-004, Phase 6).
  */
 export interface MemoryQuery {
   readonly kinds?: readonly PersistentMemoryKind[];

@@ -11,19 +11,20 @@ relevant, change strategy because of it, and make that growth observable?
 
 ## Status
 
-**Phase 3B — free local isolated Linux execution (awaiting real Docker results).** The
+**Phase 3B complete — local isolated Linux execution verified on real Docker.** The
 repository contains the contracts, domain models and event schema from Phase 1, the
 autonomous runtime (`src/agent/runtime/`) from Phase 2, the `CloudflareSandboxEnvironment`
-adapter plus gateway Worker from Phase 3, and — new — `LocalLinuxEnvironment`
+adapter plus gateway Worker from Phase 3, and `LocalLinuxEnvironment`
 (`src/sandbox/local/`, ADR-002): the same `ExecutionEnvironment` contract implemented by a
 disposable, non-root, capability-dropped Docker container built from a pinned project image.
 
-Evidence status: the runtime loop is proven with fakes (E-000); the local adapter is
-proven with fakes and its shell scripts on a real Linux kernel; the **real Docker suite and
-experiment E-003 run on the developer's Windows + Docker Desktop machine** via
-`npm run test:local` and are recorded in `docs/experiments.md` when they have run; **real
-Cloudflare verification is DEFERRED — requires Workers Paid** (not failed; code stays).
-There is still no real model provider, no persistence and no dashboard. See
+Evidence status: the runtime loop is proven with fakes (E-000); the local adapter passed
+its shell-script validation on a real Linux kernel and the **real Docker suite including
+experiment E-003 on the developer's Windows 11 + WSL2 + Docker Desktop machine — 25 passed,
+0 failed, 0 skipped** (`npm run test:local`, recorded in `docs/experiments.md`), making
+`LocalLinuxEnvironment` the verified V1 execution environment; **real Cloudflare
+verification is DEFERRED — requires Workers Paid** (not failed; code stays). There is
+still no real model provider, no persistence and no dashboard (Phases 4–13). See
 [`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md),
 [`docs/adr/ADR-001-cloudflare-sandbox.md`](docs/adr/ADR-001-cloudflare-sandbox.md) and
 [`docs/adr/ADR-002-local-linux-execution-environment.md`](docs/adr/ADR-002-local-linux-execution-environment.md).

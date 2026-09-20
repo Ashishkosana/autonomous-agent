@@ -17,7 +17,7 @@ the decisions that shaped it.
 | **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred |
 | **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                                                     |
 | **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                                                   |
-| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 9                                                                                   |
+| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 12                                                                                  |
 
 These are deliberately separate modules. Nothing collapses them into one `Agent` class:
 `AgentRuntime` orchestrates them through their interfaces and owns nothing else.
@@ -278,17 +278,20 @@ throwing for untrusted input.
 
 ## 9. Phase plan
 
-| Phase | Deliverable                                               | Status                                                         |
-| ----- | --------------------------------------------------------- | -------------------------------------------------------------- |
-| 0     | Repository assessment                                     | done                                                           |
-| 1     | Contracts, domain models, event schema, tests             | done                                                           |
-| 2     | Minimal autonomous loop proven with tests                 | done                                                           |
-| 3     | Cloudflare Sandbox `ExecutionEnvironment`                 | built; real verification DEFERRED — requires Workers Paid      |
-| 3B    | Local Docker `ExecutionEnvironment` for free development  | built; awaiting real Docker results from the developer machine |
-| 4     | Persistent memory and retrieval                           |                                                                |
-| 5     | Tools, incrementally                                      |                                                                |
-| 6     | Learning loop: experience, decisions, lessons, adaptation |                                                                |
-| 7     | Full event coverage                                       |                                                                |
-| 8     | Dashboard on real events                                  |                                                                |
-| 9     | Living Flame driven by telemetry                          |                                                                |
-| 10    | Cross-run experiment (Run #1 / Run #2)                    |                                                                |
+| Phase | Deliverable                                                            | Status                                                          |
+| ----- | ---------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 0     | Repository assessment                                                  | done                                                            |
+| 1     | Contracts, domain models, event schema, tests                          | done                                                            |
+| 2     | Minimal autonomous loop proven with tests                              | done                                                            |
+| 3     | Cloudflare Sandbox `ExecutionEnvironment`                              | built; real verification DEFERRED — requires Workers Paid       |
+| 3B    | Local Docker `ExecutionEnvironment` for free development               | done; verified on real Docker (developer machine, 25/25, E-003) |
+| 4     | Real model intelligence behind `ModelProvider`                         | in progress                                                     |
+| 5     | Real tool capabilities (filesystem, terminal, code, HTTP, web, git)    |                                                                 |
+| 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) |                                                                 |
+| 7     | Semantic memory + knowledge ingestion                                  |                                                                 |
+| 8     | Evaluation + real learning, validated-improvement metrics              |                                                                 |
+| 9     | Browser + GitHub + MCP capabilities                                    |                                                                 |
+| 10    | Observability backend (event store, live delivery, stop)               |                                                                 |
+| 11    | Dashboard on real events                                               |                                                                 |
+| 12    | Living Flame driven by validated learning                              |                                                                 |
+| 13    | Full V1 end-to-end experiment (Run 1 → destroy → Run 2)                |                                                                 |
