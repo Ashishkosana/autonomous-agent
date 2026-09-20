@@ -1,4 +1,4 @@
-import { asMemoryRecordId, type MemoryRecordId } from '../../src/domain/ids.js';
+import { asMemoryRecordId, type Clock, type MemoryRecordId } from '../../src/domain/ids.js';
 import type { RunLimits } from '../../src/domain/run.js';
 import type { Evaluator } from '../../src/evaluation/contracts.js';
 import type { KnowledgeRecord, PersistentMemoryRecord } from '../../src/memory/records.js';
@@ -124,7 +124,7 @@ export interface ScenarioOptions {
   readonly limits?: Partial<RunLimits>;
   readonly seed?: readonly PersistentMemoryRecord[];
   readonly requirement?: ArtifactRequirement;
-  readonly evaluator?: (ids: SequentialIdGenerator, clock: FixedClock) => Evaluator;
+  readonly evaluator?: (ids: SequentialIdGenerator, clock: Clock) => Evaluator;
   readonly goalStatement?: string;
   /** Defaults to a fresh FakeExecutionEnvironment; integration tests pass a real one. */
   readonly environment?: ExecutionEnvironment;
@@ -132,11 +132,13 @@ export interface ScenarioOptions {
   readonly model?: ModelProvider;
   /** Defaults to no retries and no re-asks so each scripted turn is consumed exactly once. */
   readonly resilience?: Partial<ResilienceOptions>;
+  /** Defaults to a FixedClock; real-infrastructure tests pass a real clock so latencies and duration limits are real. */
+  readonly clock?: Clock;
 }
 
 export interface Scenario {
   readonly ids: SequentialIdGenerator;
-  readonly clock: FixedClock;
+  readonly clock: Clock;
   readonly events: InMemoryEventBus;
   readonly store: InMemoryMemoryStore;
   readonly environment: ExecutionEnvironment;
@@ -146,7 +148,7 @@ export interface Scenario {
 
 export async function buildScenario(options: ScenarioOptions): Promise<Scenario> {
   const ids = new SequentialIdGenerator();
-  const clock = new FixedClock();
+  const clock = options.clock ?? new FixedClock();
   const events = new InMemoryEventBus();
   const store = new InMemoryMemoryStore();
   const environment = options.environment ?? new FakeExecutionEnvironment();

@@ -4,7 +4,8 @@ import type { ModelProvider } from '../../../src/models/contracts.js';
 import { createModelProvider } from '../../../src/models/config.js';
 import { ResilientModelProvider } from '../../../src/models/resilient-provider.js';
 import { describeTool } from '../../../src/tools/contracts.js';
-import { FixedClock, SequentialIdGenerator } from '../../support/deterministic.js';
+import { SystemClock } from '../../../src/domain/system-clock.js';
+import { SequentialIdGenerator } from '../../support/deterministic.js';
 import type { FakeExecutionEnvironment } from '../../support/fake-execution-environment.js';
 import {
   APPROACH_B_CONTENT,
@@ -32,13 +33,13 @@ import {
  */
 configureRealModelTimeouts();
 
+/** Real clock: latencies and the duration limit must be measurements, not fixtures. */
+const clock = new SystemClock();
+
 function realProvider(): ModelProvider {
   if (!MODEL_CONFIG) throw new Error('gate should have skipped this file');
   return new ResilientModelProvider(
-    createModelProvider(MODEL_CONFIG, {
-      clock: new FixedClock(),
-      ids: new SequentialIdGenerator(),
-    }),
+    createModelProvider(MODEL_CONFIG, { clock, ids: new SequentialIdGenerator() }),
     { maxRetries: 2, maxReasks: 1 },
   );
 }
@@ -133,10 +134,13 @@ describeRealModel('real model — drives the autonomous loop (E-000 goal)', () =
     const scenario = await buildScenario({
       turns: [],
       model: realProvider(),
+      clock,
       resilience: { maxRetries: 2, maxReasks: 1 },
       limits: { maxIterations: 4, maxToolCalls: 4, maxModelCalls: 12, maxDurationMs: 170_000 },
     });
+    const startedMs = clock.monotonicMs();
     const outcome = await scenario.run();
+    const runDurationMs = Math.round(clock.monotonicMs() - startedMs);
     const report = await (scenario.environment as FakeExecutionEnvironment)
       .readFile(REPORT_PATH)
       .catch(() => null);
@@ -144,15 +148,48 @@ describeRealModel('real model — drives the autonomous loop (E-000 goal)', () =
     const started = scenario.events.ofType('MODEL_CALL_STARTED');
     const completed = scenario.events.ofType('MODEL_CALL_COMPLETED');
     const failed = scenario.events.ofType('MODEL_CALL_FAILED');
+    const events = scenario.events;
     recordEvidence('e000-loop', {
       status: outcome.state.status,
       terminationReason: outcome.state.terminationReason,
+      runDurationMs,
       usage: outcome.state.usage,
       modelCalls: { started: started.length, completed: completed.length, failed: failed.length },
       failedKinds: failed.map((e) => e.payload.errorKind),
-      eventTypes: scenario.events.events.map((e) => e.type),
+      modelCallLatenciesMs: completed.map((e) => e.payload.latencyMs),
+      eventTypes: events.events.map((e) => e.type),
+      // The story of the run, from event payloads only (never prompts or completions).
+      plans: [
+        ...events.ofType('PLAN_CREATED').map((e) => ({
+          version: e.payload.version,
+          strategy: e.payload.strategySummary,
+          informedByMemoryRecordIds: e.payload.informedByMemoryRecordIds,
+        })),
+        ...events
+          .ofType('PLAN_UPDATED')
+          .map((e) => ({ version: e.payload.version, reason: e.payload.reason })),
+      ],
+      decisions: events.ofType('DECISION_CREATED').map((e) => e.payload.summary),
+      toolsSelected: events.ofType('TOOL_SELECTED').map((e) => ({
+        toolName: e.payload.toolName,
+        attempt: e.payload.attempt,
+      })),
+      toolFailures: events.ofType('TOOL_FAILED').map((e) => ({
+        toolName: e.payload.toolName,
+        errorCode: e.payload.errorCode,
+        message: e.payload.message,
+      })),
+      evaluations: events.ofType('EVALUATION_COMPLETED').map((e) => ({
+        verdict: e.payload.verdict,
+        checks: `${e.payload.checksPassed}/${e.payload.checksTotal}`,
+        summary: e.payload.summary,
+      })),
+      strategyChanges: events.ofType('STRATEGY_CHANGED').map((e) => e.payload.reason),
+      lessons: events.ofType('LESSON_CREATED').map((e) => e.payload.statement),
+      memoryWritten: events.ofType('MEMORY_WRITTEN').map((e) => e.payload.kind),
       reportWritten: report !== null,
       reportHasRequiredSection: report?.includes(REQUIRED_MARKER) ?? false,
+      report,
       goalCompleted: outcome.state.status === 'completed',
     });
 
@@ -162,6 +199,8 @@ describeRealModel('real model — drives the autonomous loop (E-000 goal)', () =
     expect(completed.length).toBeGreaterThan(0);
     expect(started.length).toBe(completed.length + failed.length);
     expect(outcome.state.usage.modelCalls).toBe(started.length);
+    // Real latencies were measured, not fixtures.
+    expect(completed.every((e) => e.payload.latencyMs > 0)).toBe(true);
     for (const event of completed) {
       expect(event.payload.provider).toBe(MODEL_SUMMARY?.providerLabel);
       expect(event.payload.model).toBe(MODEL_SUMMARY?.model);
