@@ -35,8 +35,9 @@ with a different action, and records what it learned — deterministically.
 inspects the artifact in a fake sandbox. The tool succeeds both times; only the evaluator
 distinguishes A from B.
 
-**Result.** 29 events, status `completed`, 2 iterations, 1 retry, 1 strategy change,
-5 memory writes (2 decisions, 2 experiences, 1 lesson). The lesson's provenance reaches
+**Result.** 33 events (29 at Phase 2; Phase 4 added one `MODEL_CALL_STARTED` per model
+call), status `completed`, 2 iterations, 1 retry, 1 strategy change, 5 memory writes
+(2 decisions, 2 experiences, 1 lesson). The lesson's provenance reaches
 back to the seeded knowledge record through retrieval → plan → decision → action →
 observation → evaluation, verified by id. Timeline reproduced in the Phase 2 report.
 
@@ -47,6 +48,43 @@ model may give up (`gave_up`, reason recorded); invalid model output fails the r
 
 **Caveat.** The model is scripted, so this proves the _control loop_, not model
 competence. Real-model behaviour is measured from Phase 4 onward.
+
+**Phase 4 replay over the wire** (`tests/runtime/wire-adapter-loop.test.ts`, 8 tests,
+passing). The same four scripted answers are served by a real local HTTP server in the
+OpenAI chat-completions format and consumed through `OpenAICompatibleProvider` instead of
+the in-process scripted provider: same `completed` outcome, 2 iterations, 1 retry, 1
+strategy change, 4 model calls with 400/80 tokens taken from the server's `usage`; paired
+`MODEL_CALL_STARTED`/`MODEL_CALL_COMPLETED` per call; `create_plan`/`revise_plan` sent as
+`response_format: json_schema`, `select_action` as function tools with
+`tool_choice: required`; the API key present only in the `Authorization` header and absent
+from events, memory records and the sandbox. Variants: a malformed first plan is re-asked
+once (5 calls, attempts `1,2,1,1,1`, correction turn visible on the wire) and the run
+still completes; a first `503` is retried with a `MODEL_CALL_FAILED` in between and the
+run still completes; an exhausted re-ask budget and a `401` both end the run as `failed`
+/ `unrecoverable` with redacted reasons and no tool executed. This proves the runtime is
+indifferent to which `ModelProvider` implementation answers — not model competence.
+
+## E-004 — Real model drives the loop (Phase 4, PENDING — awaiting a model endpoint)
+
+**Hypothesis.** A real language model, reached through the vendor-neutral adapter, answers
+in valid structured form often enough to plan, select tool actions and drive the E-000 goal
+to a terminal status within limits, with complete per-attempt telemetry and no credential
+leakage.
+
+**Design.** `tests/integration/model/real-model.test.ts` via `npm run test:model`, gated on
+`AGENT_MODEL_*` configuration (skipped in plain `npm test`; fails instead of skipping under
+`AGENT_REQUIRE_REAL_MODEL=1`). Three smoke tests (text, structured output, tool action for
+a concrete file-writing task) and one loop run with `maxIterations 4`, `maxModelCalls 12`.
+Assertions are about form and telemetry integrity — terminal status, at least one call
+_answered_ by the model, `started = completed + failed`, provider/model labels on every
+event, key absent from events/memory/sandbox — not about the model completing the goal,
+which is recorded as evidence (`goalCompleted`, `reportHasRequiredSection`).
+
+**Status.** NOT RUN. The authoring environment has no model credential and no local
+inference server; no evidence is claimed. The owner selects a free endpoint (any
+OpenAI-compatible server: OpenRouter `:free`, Groq free tier, Google AI Studio's
+OpenAI-compatible endpoint, or a local Ollama/LM Studio — the last needs no key) and runs
+`npm run test:model`; results are recorded here afterwards.
 
 ## E-003 — Autonomous recovery in a real local Linux sandbox (Phase 3B, PASSED on the developer machine)
 

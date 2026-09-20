@@ -8,7 +8,7 @@ An ADR is written when a decision is taken, not before. OPEN decisions are liste
 | ------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------- |
 | [ADR-001](ADR-001-cloudflare-sandbox.md)                | Cloudflare Sandbox as V1 execution environment                 | Accepted; real verification DEFERRED (Workers Paid) |
 | [ADR-002](ADR-002-local-linux-execution-environment.md) | Local Linux container as the development execution environment | Accepted; verified on real Docker                   |
-| ADR-003                                                 | Model provider                                                 | Open (Phase 4)                                      |
+| [ADR-003](ADR-003-model-provider.md)                    | Vendor-neutral OpenAI-compatible model adapter                 | Accepted; real-model verification PENDING           |
 | ADR-004                                                 | Structured memory storage                                      | Open (Phase 6)                                      |
 | ADR-005                                                 | Semantic retrieval                                             | Open (Phase 7)                                      |
 | ADR-006                                                 | Browser runtime                                                | Open (Phase 9)                                      |

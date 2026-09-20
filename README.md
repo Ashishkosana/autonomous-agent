@@ -11,23 +11,25 @@ relevant, change strategy because of it, and make that growth observable?
 
 ## Status
 
-**Phase 3B complete — local isolated Linux execution verified on real Docker.** The
-repository contains the contracts, domain models and event schema from Phase 1, the
-autonomous runtime (`src/agent/runtime/`) from Phase 2, the `CloudflareSandboxEnvironment`
-adapter plus gateway Worker from Phase 3, and `LocalLinuxEnvironment`
-(`src/sandbox/local/`, ADR-002): the same `ExecutionEnvironment` contract implemented by a
-disposable, non-root, capability-dropped Docker container built from a pinned project image.
+**Phase 4 — real model intelligence: adapter architecture TESTED, real-model verification
+pending.** The repository contains the contracts, domain models and event schema from
+Phase 1, the autonomous runtime (`src/agent/runtime/`) from Phase 2, the
+`CloudflareSandboxEnvironment` adapter plus gateway Worker from Phase 3,
+`LocalLinuxEnvironment` (`src/sandbox/local/`, ADR-002) from Phase 3B — the verified V1
+execution environment — and, new in Phase 4, a vendor-neutral **OpenAI-compatible model
+adapter** (`src/models/openai-compatible/`, ADR-003) with environment-driven configuration,
+bounded retry/re-ask recovery, per-attempt `MODEL_CALL_STARTED/COMPLETED/FAILED` telemetry
+and structural credential containment.
 
-Evidence status: the runtime loop is proven with fakes (E-000); the local adapter passed
-its shell-script validation on a real Linux kernel and the **real Docker suite including
-experiment E-003 on the developer's Windows 11 + WSL2 + Docker Desktop machine — 25 passed,
-0 failed, 0 skipped** (`npm run test:local`, recorded in `docs/experiments.md`), making
-`LocalLinuxEnvironment` the verified V1 execution environment; **real Cloudflare
-verification is DEFERRED — requires Workers Paid** (not failed; code stays). There is
-still no real model provider, no persistence and no dashboard (Phases 4–13). See
-[`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md),
-[`docs/adr/ADR-001-cloudflare-sandbox.md`](docs/adr/ADR-001-cloudflare-sandbox.md) and
-[`docs/adr/ADR-002-local-linux-execution-environment.md`](docs/adr/ADR-002-local-linux-execution-environment.md).
+Evidence status: the runtime loop is proven with fakes (E-000) and replayed through the
+real model adapter over a real local HTTP server; the **real Docker suite including E-003
+passed on the developer's Windows 11 + WSL2 + Docker Desktop machine — 25 passed, 0 failed,
+0 skipped** (`npm run test:local`); **real-model verification (E-004) is PENDING — no model
+endpoint/credential has been configured yet**, and no real-model evidence is claimed;
+**real Cloudflare verification is DEFERRED — requires Workers Paid**. There is still no
+persistence and no dashboard (Phases 5–13). See
+[`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md)
+and the ADRs in [`docs/adr/`](docs/adr/README.md).
 
 ## Layout
 
@@ -36,7 +38,8 @@ src/
   domain/      identifiers, provenance, goal, plan, action, observation, artifact, run
   events/      structured event schema, correlation fields, sink/source contracts
   tools/       Tool contract, ToolRegistry, structured ToolResult
-  models/      ModelProvider contract + instrumentation decorator (provider is OPEN)
+  models/      ModelProvider contract, error kinds, secret redaction, instrumentation + resilience decorators, env config
+  models/openai-compatible/  fetch-based adapter for any OpenAI-compatible endpoint (wire translation + transport)
   sandbox/     ExecutionEnvironment contract
   sandbox/cloudflare/  CloudflareSandboxEnvironment, SandboxClient port, HTTP client, wire protocol (no SDK import)
   sandbox/local/       LocalLinuxEnvironment, ContainerRuntime port, container scripts, DockerCliRuntime
@@ -46,14 +49,16 @@ src/
   agent/       Planner / ActionSelector / Executor / Learner contracts and implementations
   agent/runtime/  AgentRuntime loop, RunSession, RunUsageTracker, composition root
 tests/         contract, behavioural and architecture-rule tests
-tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering)
+tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering, E-000 over the wire adapter)
+tests/models/  model layer: wire translation, adapter against a real local HTTP server, config, resilience, telemetry, redaction
 tests/sandbox/ Cloudflare adapter, gateway handler and HTTP client unit tests (fake sandbox client)
 tests/integration/cloudflare/  tests that need a REAL Cloudflare sandbox; skip loudly without credentials
 tests/integration/local/       tests that need REAL Docker; skip loudly by default, fail (never skip) under npm run test:local
-tests/support/ test-only adapters (fake environment, fake sandbox client, in-memory store, scripted model, rule evaluator)
+tests/integration/model/       tests that need a REAL model endpoint; skip loudly by default, fail (never skip) under npm run test:model
+tests/support/ test-only adapters (fake environment, fake sandbox client, fake OpenAI-format server, in-memory store, scripted model, rule evaluator)
 worker/        Cloudflare gateway Worker — the only place `@cloudflare/sandbox` is imported
 sandbox/local-linux/  Dockerfile for the pinned local sandbox image (agent-sandbox-local)
-scripts/       cross-platform helpers: build/clean the sandbox image, run the local Docker suite
+scripts/       cross-platform helpers: build/clean the sandbox image, run the local Docker suite, run the real-model suite
 docs/          architecture, experiments, ADRs
 ```
 
@@ -68,6 +73,28 @@ npm test             # tests only; Cloudflare integration tests are skipped with
 npm run typecheck    # strict TypeScript, no emit
 npm run format       # prettier --write
 ```
+
+## Running against a real model (any OpenAI-compatible endpoint)
+
+The runtime never names a vendor; you name an endpoint. Any server that speaks the OpenAI
+chat-completions format works — hosted free tiers (OpenRouter `:free` models, Groq, Google
+AI Studio's OpenAI-compatible endpoint) or a local server (Ollama, LM Studio — no key). Set
+the variables in your shell (or a git-ignored `.env`; see `.env.example`), then:
+
+```bash
+export AGENT_MODEL_PROVIDER=openai-compatible
+export AGENT_MODEL_BASE_URL=https://<endpoint>/v1        # e.g. http://localhost:11434/v1 for Ollama
+export AGENT_MODEL_NAME=<model id as the endpoint expects it>
+export AGENT_MODEL_API_KEY=<key>                          # omit for keyless local servers
+npm run test:model        # REAL-model suite (E-004): smoke tests + the E-000 goal driven by the model; fails if unset
+```
+
+Optional knobs: `AGENT_MODEL_LABEL` (telemetry label), `AGENT_MODEL_TIMEOUT_MS`,
+`AGENT_MODEL_STRUCTURED_MODE` (`json_schema` | `json_object` | `prompt`),
+`AGENT_MODEL_TOOL_MODE` (`tools` | `json`, for servers without function calling),
+`AGENT_MODEL_TEMPERATURE`, `AGENT_MODEL_EXTRA_HEADERS` (JSON). The key is sent only as the
+`Authorization` header; it is never written to events, memory, the sandbox, logs or error
+messages (enforced by tests). Details and rationale: ADR-003.
 
 ## Running against a real local Linux sandbox (Docker)
 
@@ -112,6 +139,11 @@ Secrets live only in the environment or Wrangler secrets; see `.env.example` and
 ## Design rules enforced by tests
 
 - Core modules never import Cloudflare or model-vendor SDKs (`tests/architecture.test.ts`).
+- `src/` has no third-party runtime dependencies outside an explicit, per-file adapter
+  allowlist (currently empty) that may never name a core directory.
+- `src/` never reads `process.env` — configuration is resolved at composition roots and
+  passed in; network `fetch` is confined to the two named adapters; the model adapter never
+  retains the API key as a property.
 - `src/` never imports from `tests/`; in-memory adapters are not production code.
 - A successful tool call never implies task success (`tests/evaluation.test.ts`).
 - Every derived record carries provenance so the chain
