@@ -271,12 +271,18 @@ export function buildToolActionRequest(
   };
 }
 
-/** Schema for the JSON-proposal fallback used with servers that lack function calling. */
+/**
+ * Schema for the JSON-proposal fallback used with servers that lack function
+ * calling. Servers that enforce the schema by grammar let the model stop after
+ * the `required` fields, so everything the runtime's parser insists on for
+ * every kind — `kind` and `rationale` — must be declared required here; the
+ * kind-specific fields stay optional and are validated by the parser.
+ */
 export function toolActionProposalSchema(tools: readonly ToolDescriptor[]): JsonSchema {
   return {
     type: 'object',
     description:
-      'Exactly one of: {kind:"tool", toolName, input, rationale, confidence?, alternatives?} | {kind:"finish", summary, rationale} | {kind:"give_up", reason}',
+      'Exactly one of: {kind:"tool", toolName, input, rationale, confidence?, alternatives?} | {kind:"finish", summary, rationale} | {kind:"give_up", reason, rationale}',
     properties: {
       kind: { type: 'string', enum: ['tool', FINISH_TOOL, GIVE_UP_TOOL] },
       toolName: { type: 'string', enum: tools.map((t) => t.name) },
@@ -285,7 +291,7 @@ export function toolActionProposalSchema(tools: readonly ToolDescriptor[]): Json
       reason: { type: 'string' },
       ...RATIONALE_PROPERTIES,
     },
-    required: ['kind'],
+    required: ['kind', 'rationale'],
   };
 }
 

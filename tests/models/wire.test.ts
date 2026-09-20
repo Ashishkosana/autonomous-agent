@@ -14,6 +14,7 @@ import {
   toFinishReason,
   toUsage,
   toWireTools,
+  toolActionProposalSchema,
 } from '../../src/models/openai-compatible/wire.js';
 import { describeTool } from '../../src/tools/contracts.js';
 import { echoTool, writeFileTool } from '../support/tools.js';
@@ -343,6 +344,18 @@ describe('proposal parsing', () => {
       known,
     );
     expect(missingRationale).toEqual({
+      ok: false,
+      errors: ['rationale must be a non-empty string'],
+    });
+  });
+
+  it('the JSON-mode proposal schema requires what the parser requires for every kind', () => {
+    // Found by E-004: a grammar-enforcing server let the model omit `rationale`
+    // because the schema did not require it, while the parser did.
+    const schema = toolActionProposalSchema(tools);
+    expect(schema.required).toEqual(['kind', 'rationale']);
+    expect(schema.properties?.['toolName']).toEqual({ type: 'string', enum: known });
+    expect(parseToolActionProposal({ kind: 'tool', toolName: 'echo', input: {} }, known)).toEqual({
       ok: false,
       errors: ['rationale must be a non-empty string'],
     });
