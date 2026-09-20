@@ -27,6 +27,9 @@ export interface SdkSandboxClientOptions {
  *   provider-neutral contract passes `cwd`/`env` per call and has no hidden
  *   shell state. (Also the SDK's recommended forward-compatible setting.)
  * - `normalizeId: true` — lowercase ids, the SDK's future default.
+ * - `transport: 'rpc'` — the SDK's primary DO→container control path; the
+ *   default HTTP transport is deprecated (Cloudflare 2026 deprecation guide).
+ *   Must stay identical on every `getSandbox()` call for a given id.
  */
 export class SdkSandboxClient implements SandboxClient {
   private readonly sandbox: Sandbox;
@@ -41,6 +44,7 @@ export class SdkSandboxClient implements SandboxClient {
     this.sandbox = getSandbox(namespace, sandboxId, {
       enableDefaultSession: false,
       normalizeId: true,
+      transport: 'rpc',
       ...(options.sleepAfter ? { sleepAfter: options.sleepAfter } : {}),
     });
   }

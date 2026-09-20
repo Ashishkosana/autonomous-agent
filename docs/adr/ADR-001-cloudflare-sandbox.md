@@ -121,6 +121,20 @@ Aug–Sep 2026), plus the published npm package and Docker Hub tags.
 4. `enableDefaultSession: false` (each `exec` independent, `cwd`/`env` per call — the
    contract has no hidden shell state; also the SDK's recommended forward-compatible
    setting) and `normalizeId: true` (lowercase ids, the SDK's future default).
+5. `transport: 'rpc'`. Cloudflare's 2026 deprecation guide (checked via the official
+   `sandbox-stable` skill during onboarding) deprecates the default HTTP and the WebSocket
+   DO→container transports in favour of RPC. Set explicitly in `getSandbox()` rather than
+   via `SANDBOX_TRANSPORT` so there is one source of truth; it must not change for an id
+   once in use.
+
+**Onboarding check (2026-09-20).** Cloudflare's agent-setup instructions
+(`developers.cloudflare.com/agent-setup/prompt.md`) were applied: official skills installed
+to `~/.agents/skills` (14, including `sandbox-stable`, `wrangler`, `durable-objects`) and
+the five Cloudflare MCP servers registered in `.cursor/mcp.json` (URLs only, OAuth on first
+use). Comparing the `sandbox-stable` skill's gate and contract with this repository: package
+and image are both on the stable `0.12.9` line; `exec` is used as a buffered command string;
+sessions are disabled; the only deviation was the deprecated default transport, fixed by
+choice 5. No conflict with the architecture; no restructuring performed.
 
 ### Mapping: `ExecutionEnvironment` → Cloudflare
 
@@ -212,9 +226,9 @@ state for one run, and even within a run the runtime must tolerate a container r
   correctly.
 - **Request ceiling**: without `timeoutMs`, a command longer than the SDK's 120 s request
   timeout fails with `unavailable`; tools should pass explicit deadlines.
-- **Per-call subrequests**: each adapter call is one Worker request → one SDK call. Fine
-  for the gateway topology; if the runtime ever moves inside the Worker, enable RPC
-  transport to stay under subrequest limits.
+- **Per-call subrequests**: each adapter call is one Worker request → one SDK call over
+  the RPC transport. Fine for the gateway topology; if the runtime ever moves inside the
+  Worker, the multiplexed RPC session is what keeps it under subrequest limits.
 - **No Python** in the default image; choose `-python` or a custom image when needed.
 - **Gateway is a network hop**: latency per operation is a round trip to the Worker plus
   the Worker→container call. Measured values will be recorded from the evidence files.
