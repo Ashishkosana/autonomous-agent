@@ -1,7 +1,22 @@
 node_modules/
 dist/
 coverage/
-.wrangler/
-.dev.vars
 *.log
 .DS_Store
+
+# Cloudflare / Wrangler local state and secrets — never committed
+.wrangler/
+**/.wrangler/
+.dev.vars
+**/.dev.vars
+.dev.vars.*
+!.dev.vars.example
+!**/.dev.vars.example
+
+# Local environment files (gateway URL/token, Cloudflare API token) — never committed
+.env
+.env.*
+!.env.example
+
+# Evidence dumps from real-sandbox runs live outside the repo; guard against accidents
+agent-sandbox-evidence/
