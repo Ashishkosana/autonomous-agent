@@ -64,7 +64,7 @@ run still completes; an exhausted re-ask budget and a `401` both end the run as 
 / `unrecoverable` with redacted reasons and no tool executed. This proves the runtime is
 indifferent to which `ModelProvider` implementation answers — not model competence.
 
-## E-004 — Real model drives the loop (Phase 4, PENDING — awaiting a model endpoint)
+## E-004 — Real model drives the loop (Phase 4, EXECUTED against a real local model — under review)
 
 **Hypothesis.** A real language model, reached through the vendor-neutral adapter, answers
 in valid structured form often enough to plan, select tool actions and drive the E-000 goal
@@ -80,11 +80,100 @@ _answered_ by the model, `started = completed + failed`, provider/model labels o
 event, key absent from events/memory/sandbox — not about the model completing the goal,
 which is recorded as evidence (`goalCompleted`, `reportHasRequiredSection`).
 
-**Status.** NOT RUN. The authoring environment has no model credential and no local
-inference server; no evidence is claimed. The owner selects a free endpoint (any
-OpenAI-compatible server: OpenRouter `:free`, Groq free tier, Google AI Studio's
-OpenAI-compatible endpoint, or a local Ollama/LM Studio — the last needs no key) and runs
-`npm run test:model`; results are recorded here afterwards.
+**Setup (2026-09-20).** Ollama 0.34.2 installed into `/tmp` on the Cursor cloud VM
+(4 vCPU, no GPU, ~6 GB free RAM), bound to `127.0.0.1:11434`, models pulled from the
+public registry. Nothing Ollama-specific was added to the runtime: the endpoint is reached
+through `OpenAICompatibleProvider` with `AGENT_MODEL_PROVIDER=openai-compatible`,
+`AGENT_MODEL_BASE_URL=http://127.0.0.1:11434/v1`, no API key. Verified path:
+`AgentRuntime → ModelProvider → ResilientModelProvider → InstrumentedModelProvider →
+OpenAICompatibleProvider → fetch → Ollama → qwen2.5:3b → structured JSON → planner /
+selector → FakeExecutionEnvironment → ArtifactRequirementEvaluator → learner → memory`.
+Evidence files are outside the repository (`/tmp/agent-evidence-e004-run*`).
+
+**Compatibility findings (exact evidence, before any code change).**
+
+| Probe / run                         | Config                       | Result                                                                                                                                                                           |
+| ----------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| raw `/v1/chat/completions`, text    | —                            | `pong`, `usage` reported (37/2 tokens)                                                                                                                                           |
+| raw, `response_format: json_schema` | —                            | valid `{"colours":[…]}`; Ollama enforces the schema by grammar                                                                                                                   |
+| raw, function tools + `required`    | —                            | tool call returned but **flattened**: `{"path","content"}` instead of `{"input":{…},"rationale":…}`                                                                              |
+| run 1 (`npm run test:model`)        | defaults (`tools`)           | plan created via `json_schema` (real `PLAN_CREATED`); both `select_action` attempts `invalid_response` (`rationale must be a non-empty string; input is required`); run `failed` |
+| wire capture, `tools`               | defaults                     | 74 completion tokens, `content: ""`, no `tool_calls`, `finish_reason: stop` — Ollama's tool parser dropped a malformed call                                                      |
+| run 2                               | `AGENT_MODEL_TOOL_MODE=json` | model returned `{"kind":"tool","toolName":"fs.write","input":{exact required content}}` **without `rationale`**; rejected twice; run `failed`                                    |
+
+Root cause of run 2 was on our side: `toolActionProposalSchema` declared only `kind` as
+`required`, while the parser requires `rationale`; a grammar-enforcing server legitimately
+lets the model stop early. Fixed in commit `9808352` (schema now requires `kind` and
+`rationale`; unit test added). The `tools`-mode flattening is model-side: two different 3B
+models (qwen2.5:3b, llama3.2:3b) both place the tool's fields at the top level and drop the
+wrapper. No code was changed for it; it is recorded under architectural concerns.
+
+**Results after the schema fix — `qwen2.5:3b`, `AGENT_MODEL_TOOL_MODE=json`** (three
+consecutive full runs of `npm run test:model`; every run **4 passed / 0 failed / 0 skipped,
+exit 0**, i.e. text, structured output, a valid `fs.write` proposal with rationale, and a
+terminal loop with consistent telemetry):
+
+| Run | Status          | Iter | Model calls (started = completed + failed) | Tool calls | Evaluations (verdicts)             | Strategy changes | Lesson | Report has `## Sources` | Duration |
+| --- | --------------- | ---- | ------------------------------------------ | ---------- | ---------------------------------- | ---------------- | ------ | ----------------------- | -------- |
+| 3   | **`completed`** | 3    | 5 = 5 + 0                                  | 3          | failure → success → success        | 1                | 1      | yes                     | 76 s     |
+| 4   | `limit_reached` | 4    | 7 = 7 + 0                                  | 4          | failure, success, failure, success | 2                | 0      | yes                     | 127 s    |
+| 5   | `limit_reached` | 4    | 8 = 8 + 0                                  | 4          | failure, success, failure, success | 2                | 0      | yes                     | 127 s    |
+
+Run 3 is the first fully autonomous real-model completion: the model's first `fs.write`
+failed (tool error), the runtime emitted `FAILURE_DETECTED`, the model revised the plan
+with a changed strategy, `RETRY_STARTED` → `TOOL_COMPLETED` → evaluation `success`, a
+`LessonRecord` was derived from the failure→success contrast, and the remaining task
+completed → `GOAL_COMPLETED`. Event sequence:
+
+```
+GOAL_RECEIVED, MEMORY_SEARCH_STARTED, MEMORY_RETRIEVED, MODEL_CALL_STARTED, MODEL_CALL_COMPLETED,
+PLAN_CREATED, MODEL_CALL_STARTED, MODEL_CALL_COMPLETED, DECISION_CREATED, TOOL_SELECTED, TOOL_STARTED,
+TOOL_FAILED, EVALUATION_COMPLETED, MEMORY_WRITTEN×2, FAILURE_DETECTED, MODEL_CALL_STARTED,
+MODEL_CALL_COMPLETED, STRATEGY_CHANGED, PLAN_UPDATED, MODEL_CALL_STARTED, MODEL_CALL_COMPLETED,
+DECISION_CREATED, RETRY_STARTED, TOOL_SELECTED, TOOL_STARTED, TOOL_COMPLETED, EVALUATION_COMPLETED,
+MEMORY_WRITTEN×2, LESSON_CREATED, MEMORY_WRITTEN, MODEL_CALL_STARTED, MODEL_CALL_COMPLETED,
+DECISION_CREATED, TOOL_SELECTED, TOOL_STARTED, TOOL_COMPLETED, EVALUATION_COMPLETED, MEMORY_WRITTEN×2,
+GOAL_COMPLETED
+```
+
+Runs 4 and 5 wrote a valid report (evaluation `success` twice each) but ended at
+`maxIterations 4`: on every revision the 3B model **added new tasks** (task-5, -6, -8 …)
+instead of retrying or finishing, so the plan never had all tasks complete. Per-call
+latency on CPU: 7–20 s (real `SystemClock`). Token usage 2.2k–4.0k input per run for a
+2-tool catalogue.
+
+**Comparison model — `llama3.2:3b`.** `tools` mode: same flattening → `failed` after the
+re-ask. `json` mode: valid structured plans, 4 strategy changes, but chose `echo` on all
+four attempts and once omitted `toolName`; `limit_reached`, no report. Runtime behaviour
+was correct throughout (no crash, `started = completed + failed`, retries and strategy
+changes recorded); the model was not competent enough for the goal.
+
+**What this experiment establishes.** With a real local LLM over real HTTP, the runtime
+plans, selects validated tool actions, executes, evaluates, detects failure, changes
+strategy, retries, learns and completes — with zero code paths specific to the model or
+to Ollama, using the shipped `AGENT_MODEL_TOOL_MODE` configuration. It also establishes
+that a 3B model is at the edge of competence for this goal (1 completion in 3 runs) and
+that `tools` mode is unusable with the current wrapper on small models. It was executed on
+the Cursor cloud VM, not the developer machine; the same commands reproduce it there
+(Ollama for Windows/WSL, `ollama pull qwen2.5:3b`, then the env vars above and
+`npm run test:model`).
+
+**Architectural observations for later phases (not acted on).**
+
+1. `tools`-mode wrapper (`{input, rationale}`) is flattened by small models. Options for
+   Phase 5/8, to be chosen with more model evidence: accept top-level arguments that match
+   the tool's schema as `input` and take `rationale` from assistant text or a follow-up;
+   or make `json` mode the default for small models. Not changed now.
+2. The JSON-mode proposal schema is a flat union (`toolName`, `summary`, `reason` all
+   optional); grammar-enforcing servers therefore cannot force `toolName` for
+   `kind: "tool"`. A discriminated `anyOf` would be stricter if the servers we target
+   support it.
+3. Plan-revision discipline: small models grow the task list on every revision; the
+   runtime honours that faithfully and the iteration limit ends the run. Phase 8 should
+   consider whether revisions may add tasks freely.
+4. Tool-catalogue size: every `select_action` carries every tool's schema (already 165–586
+   prompt tokens for 2 tools depending on mode). Phase 5 will show the real catalogue size
+   before any retrieval/filtering is designed.
 
 ## E-003 — Autonomous recovery in a real local Linux sandbox (Phase 3B, PASSED on the developer machine)
 

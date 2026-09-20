@@ -1,7 +1,9 @@
 # ADR-003 — Model provider: a vendor-neutral OpenAI-compatible adapter behind `ModelProvider`
 
-**Status:** accepted (Phase 4) — adapter architecture; **real-model verification PENDING**
-(no credential available to the authoring environment; see §6). · **Date:** 2026-09-20 ·
+**Status:** accepted (Phase 4) — adapter architecture; **E-004 executed against a real local
+model** (Ollama `qwen2.5:3b` on the Cursor cloud VM, `AGENT_MODEL_TOOL_MODE=json`: 3/3 runs
+4-of-4 passed, goal completed autonomously in 1 of 3 — see `docs/experiments.md` E-004;
+under owner review, developer-machine reproduction pending). · **Date:** 2026-09-20 ·
 **Relates to:** ADR-001, ADR-002 (same "contract + swappable adapter" pattern).
 
 ## 1. Context
@@ -119,11 +121,14 @@ Constraints from the project owner:
 
 ## 6. What remains open
 
-- **Which free model/endpoint** to use for verification and V1 runs. The adapter supports
-  any OpenAI-compatible endpoint; the owner chooses. Recommended first candidates (all have
-  free tiers or run locally): OpenRouter `:free` models, Groq free tier, Google AI Studio's
-  OpenAI-compatible endpoint, or a local Ollama/LM Studio server (keyless).
-- Whether structured-output or tool-calling quality of the chosen model requires
-  `json_object`/`prompt` or `json` modes — configurable, decided by evidence.
+- **Which model/endpoint** to use for V1 runs. E-004 shows a 3B local model is at the edge
+  of competence (1 completion in 3 runs; plans grow on every revision). Candidates: a larger
+  local model if the developer machine allows, or a free hosted tier (OpenRouter `:free`,
+  Groq, Google AI Studio's OpenAI-compatible endpoint) — all reachable by configuration only.
+- `tools` mode: two small models flattened the `{input, rationale}` wrapper (E-004). Whether
+  to accept flattened arguments, move `rationale` elsewhere, or default to `json` mode is
+  decided after Phase 5 provides more tool and model evidence — not for one model.
+- The JSON-mode proposal schema is a flat union; a discriminated `anyOf` would let
+  schema-enforcing servers require `toolName` for `kind: "tool"`.
 - Prompt-size control and per-purpose model routing (e.g. cheaper model for
   `summarize`) — later phases, behind the same contract.

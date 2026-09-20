@@ -24,8 +24,10 @@ and structural credential containment.
 Evidence status: the runtime loop is proven with fakes (E-000) and replayed through the
 real model adapter over a real local HTTP server; the **real Docker suite including E-003
 passed on the developer's Windows 11 + WSL2 + Docker Desktop machine — 25 passed, 0 failed,
-0 skipped** (`npm run test:local`); **real-model verification (E-004) is PENDING — no model
-endpoint/credential has been configured yet**, and no real-model evidence is claimed;
+0 skipped** (`npm run test:local`); **E-004 has been executed against a real local model**
+(Ollama `qwen2.5:3b` through the unchanged OpenAI-compatible adapter, `AGENT_MODEL_TOOL_MODE=json`:
+3/3 runs passed 4-of-4, the goal was completed autonomously with a real failure → strategy
+change → retry → lesson in 1 of 3 runs; results under review, see `docs/experiments.md`);
 **real Cloudflare verification is DEFERRED — requires Workers Paid**. There is still no
 persistence and no dashboard (Phases 5–13). See
 [`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md)
@@ -88,6 +90,11 @@ export AGENT_MODEL_NAME=<model id as the endpoint expects it>
 export AGENT_MODEL_API_KEY=<key>                          # omit for keyless local servers
 npm run test:model        # REAL-model suite (E-004): smoke tests + the E-000 goal driven by the model; fails if unset
 ```
+
+Verified configuration (E-004): Ollama with `qwen2.5:3b` needs `AGENT_MODEL_TOOL_MODE=json`
+— small models flatten the native function-call wrapper. A 3B model on CPU takes 7–20 s per
+call and completes the E-000 goal in roughly one run out of three; a larger model is
+recommended for real work.
 
 Optional knobs: `AGENT_MODEL_LABEL` (telemetry label), `AGENT_MODEL_TIMEOUT_MS`,
 `AGENT_MODEL_STRUCTURED_MODE` (`json_schema` | `json_object` | `prompt`),
