@@ -81,12 +81,21 @@ export interface ToolActionRequest extends ModelRequest {
  * What the model proposes to do next. `rationale` is a concise, human-facing
  * justification suitable for the dashboard — it is not raw chain-of-thought.
  */
+export interface ProposalAlternative {
+  readonly description: string;
+  readonly whyNot: string;
+}
+
 export type ToolActionProposal =
   | {
       readonly kind: 'tool';
       readonly toolName: string;
       readonly input: unknown;
       readonly rationale: string;
+      /** Other options the model says it weighed. Optional: not every provider can report them. */
+      readonly alternatives?: readonly ProposalAlternative[];
+      /** 0..1, optional for the same reason. */
+      readonly confidence?: number;
     }
   | { readonly kind: 'finish'; readonly summary: string; readonly rationale: string }
   | { readonly kind: 'give_up'; readonly reason: string };

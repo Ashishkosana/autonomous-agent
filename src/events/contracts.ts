@@ -117,7 +117,8 @@ export interface AgentEventPayloads {
     readonly decisionId: DecisionId;
     readonly summary: string;
     readonly optionCount: number;
-    readonly confidence: number;
+    /** Only present when the model actually reported a confidence. */
+    readonly confidence?: number;
   };
   MODEL_CALL_COMPLETED: {
     readonly modelCallId: ModelCallId;
@@ -184,8 +185,13 @@ export interface AgentEventPayloads {
     readonly summary: string;
   };
   GOAL_COMPLETED: { readonly summary: string; readonly iterations: number };
-  GOAL_FAILED: { readonly reason: string; readonly iterations: number };
-  RUN_LIMIT_REACHED: { readonly limit: string; readonly value: number };
+  GOAL_FAILED: {
+    readonly reason: string;
+    readonly iterations: number;
+    /** `gave_up`: the agent chose to stop. `unrecoverable`: a runtime/model error stopped it. */
+    readonly cause: 'gave_up' | 'unrecoverable';
+  };
+  RUN_LIMIT_REACHED: { readonly limit: string; readonly value: number; readonly max: number };
 }
 
 /**

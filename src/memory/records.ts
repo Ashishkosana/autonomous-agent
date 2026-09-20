@@ -111,8 +111,8 @@ export interface DecisionRecord extends MemoryRecordBase<'decision'> {
   readonly selectedOptionId: string;
   readonly evidence: readonly EvidenceReference[];
   readonly reason: string;
-  /** 0..1 */
-  readonly confidence: number;
+  /** 0..1. Absent when the deciding component did not report one; never invented. */
+  readonly confidence?: number;
   readonly actionId?: ActionId;
   readonly outcome: DecisionOutcome;
   readonly lessonIds: readonly LessonId[];

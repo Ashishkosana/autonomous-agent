@@ -12,8 +12,18 @@ export interface RunLimits {
   readonly maxDurationMs: number;
 }
 
+/**
+ * Terminal statuses are deliberately distinct:
+ * - `completed`     — the evaluator confirmed every planned task.
+ * - `gave_up`       — the agent itself decided continuation was not useful.
+ * - `failed`        — an unrecoverable runtime/model error stopped the run.
+ * - `limit_reached` — a configured RunLimit stopped the run; says nothing about the goal.
+ * - `stopped`       — a human stopped the run externally.
+ */
 export type RunStatus =
-  'created' | 'running' | 'completed' | 'failed' | 'limit_reached' | 'stopped';
+  'created' | 'running' | 'completed' | 'gave_up' | 'failed' | 'limit_reached' | 'stopped';
+
+export type RunLimitName = keyof RunLimits;
 
 /** Counters that the dashboard reports as "resource usage". */
 export interface RunUsage {

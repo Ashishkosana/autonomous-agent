@@ -1,7 +1,7 @@
 import type { Action } from '../domain/action.js';
 import type { Goal } from '../domain/goal.js';
 import type { Observation } from '../domain/observation.js';
-import type { Plan } from '../domain/plan.js';
+import type { Plan, PlanTask } from '../domain/plan.js';
 import type { RunCorrelation } from '../domain/provenance.js';
 import type { EvaluationResult } from '../evaluation/contracts.js';
 import type { DecisionRecord, ExperienceRecord, LessonRecord } from '../memory/records.js';
@@ -37,9 +37,21 @@ export interface Planner {
 export interface ActionSelectionInput {
   readonly goal: Goal;
   readonly plan: Plan;
+  /** The task the runtime wants progress on. */
+  readonly task: PlanTask;
+  /** Earlier attempts at this task, oldest first. Empty on a first attempt. */
+  readonly previousAttempts: readonly TaskAttempt[];
   readonly working: WorkingMemorySnapshot;
   readonly retrievals: readonly RetrievalResult[];
   readonly availableTools: readonly ToolDescriptor[];
+}
+
+/** One evaluated attempt at a task: the unit the runtime retries and learns from. */
+export interface TaskAttempt {
+  readonly action: Action;
+  readonly observation: Observation;
+  readonly evaluation: EvaluationResult;
+  readonly decision?: DecisionRecord;
 }
 
 export type ActionSelection =
@@ -57,10 +69,10 @@ export interface Executor {
 
 export interface LearningInput {
   readonly correlation: RunCorrelation;
-  readonly action: Action;
-  readonly observation: Observation;
-  readonly evaluation: EvaluationResult;
-  readonly decision?: DecisionRecord;
+  readonly task: PlanTask;
+  readonly attempt: TaskAttempt;
+  /** Earlier attempts at the same task, oldest first. Lets the learner compare approaches. */
+  readonly previousAttempts: readonly TaskAttempt[];
 }
 
 export interface LearningOutput {

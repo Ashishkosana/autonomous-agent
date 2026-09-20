@@ -117,7 +117,11 @@ describe('event contract', () => {
       new SequentialIdGenerator(),
       new FixedClock(),
     );
-    const event = factory.create('RUN_LIMIT_REACHED', { limit: 'maxIterations', value: 50 });
+    const event = factory.create('RUN_LIMIT_REACHED', {
+      limit: 'maxIterations',
+      value: 50,
+      max: 50,
+    });
     expect('goalId' in event).toBe(false);
   });
 });
