@@ -1,0 +1,73 @@
+import type { Action } from '../domain/action.js';
+import type { Goal } from '../domain/goal.js';
+import type { Observation } from '../domain/observation.js';
+import type { Plan } from '../domain/plan.js';
+import type { RunCorrelation } from '../domain/provenance.js';
+import type { EvaluationResult } from '../evaluation/contracts.js';
+import type { DecisionRecord, ExperienceRecord, LessonRecord } from '../memory/records.js';
+import type { RetrievalResult } from '../memory/retrieval.js';
+import type { WorkingMemorySnapshot } from '../memory/working.js';
+import type { ToolDescriptor } from '../tools/contracts.js';
+
+/**
+ * Contracts for the components the autonomous runtime (Phase 2) will
+ * orchestrate. Each is independently replaceable and testable. The runtime
+ * loop itself is intentionally absent from Phase 1.
+ */
+
+export interface PlanningInput {
+  readonly goal: Goal;
+  readonly working: WorkingMemorySnapshot;
+  /** Memory retrieved for this planning step; the planner must cite what it used. */
+  readonly retrievals: readonly RetrievalResult[];
+  readonly availableTools: readonly ToolDescriptor[];
+}
+
+export interface RevisionInput extends PlanningInput {
+  readonly previousPlan: Plan;
+  /** The evaluation(s) that triggered re-planning. */
+  readonly triggeringEvaluations: readonly EvaluationResult[];
+}
+
+export interface Planner {
+  createPlan(input: PlanningInput): Promise<Plan>;
+  revisePlan(input: RevisionInput): Promise<Plan>;
+}
+
+export interface ActionSelectionInput {
+  readonly goal: Goal;
+  readonly plan: Plan;
+  readonly working: WorkingMemorySnapshot;
+  readonly retrievals: readonly RetrievalResult[];
+  readonly availableTools: readonly ToolDescriptor[];
+}
+
+export type ActionSelection =
+  | { readonly kind: 'act'; readonly action: Action; readonly decision?: DecisionRecord }
+  | { readonly kind: 'finish'; readonly summary: string }
+  | { readonly kind: 'give_up'; readonly reason: string };
+
+export interface ActionSelector {
+  selectNext(input: ActionSelectionInput): Promise<ActionSelection>;
+}
+
+export interface Executor {
+  execute(action: Action): Promise<Observation>;
+}
+
+export interface LearningInput {
+  readonly correlation: RunCorrelation;
+  readonly action: Action;
+  readonly observation: Observation;
+  readonly evaluation: EvaluationResult;
+  readonly decision?: DecisionRecord;
+}
+
+export interface LearningOutput {
+  readonly experience: ExperienceRecord;
+  readonly lessons: readonly LessonRecord[];
+}
+
+export interface Learner {
+  learn(input: LearningInput): Promise<LearningOutput>;
+}
