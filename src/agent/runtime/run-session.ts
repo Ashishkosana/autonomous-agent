@@ -19,7 +19,7 @@ import type {
 } from '../../events/contracts.js';
 import { RunEventFactory } from '../../events/factory.js';
 import { RunWorkingMemory } from '../../memory/working.js';
-import type { ModelCallRecord } from '../../models/contracts.js';
+import type { ModelCallFailure, ModelCallRecord, ModelCallStart } from '../../models/contracts.js';
 import { RunUsageTracker } from './run-usage.js';
 
 export interface RunSessionOptions {
@@ -93,9 +93,27 @@ export class RunSession {
     };
   }
 
-  /** Hook for the instrumented model provider: account usage and make the call observable. */
-  recordModelCall(record: ModelCallRecord): void {
+  /**
+   * Hooks for the instrumented model provider. Every attempt counts against
+   * `maxModelCalls` the moment it starts — a failed or timed-out call still
+   * consumed a call — while tokens are added only from reported usage.
+   */
+  recordModelCallStarted(record: ModelCallStart): void {
     this.usage.increment('modelCalls');
+    this.emit(
+      'MODEL_CALL_STARTED',
+      {
+        modelCallId: record.modelCallId,
+        purpose: record.purpose,
+        provider: record.descriptor.provider,
+        model: record.descriptor.model,
+        attempt: record.attempt,
+      },
+      { modelCallId: record.modelCallId },
+    );
+  }
+
+  recordModelCall(record: ModelCallRecord): void {
     this.usage.addTokens(record.usage.inputTokens, record.usage.outputTokens);
     this.emit(
       'MODEL_CALL_COMPLETED',
@@ -106,7 +124,28 @@ export class RunSession {
         model: record.descriptor.model,
         inputTokens: record.usage.inputTokens,
         outputTokens: record.usage.outputTokens,
+        usageReported: record.usage.reported ?? true,
         latencyMs: record.latencyMs,
+        finishReason: record.finishReason,
+        attempt: record.attempt,
+      },
+      { modelCallId: record.modelCallId },
+    );
+  }
+
+  recordModelCallFailed(record: ModelCallFailure): void {
+    this.emit(
+      'MODEL_CALL_FAILED',
+      {
+        modelCallId: record.modelCallId,
+        purpose: record.purpose,
+        provider: record.descriptor.provider,
+        model: record.descriptor.model,
+        latencyMs: record.latencyMs,
+        errorKind: record.errorKind,
+        message: record.message,
+        retryable: record.retryable,
+        attempt: record.attempt,
       },
       { modelCallId: record.modelCallId },
     );

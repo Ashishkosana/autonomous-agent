@@ -17,6 +17,8 @@ import type {
 } from '../domain/ids.js';
 import type { EvaluationVerdict } from '../evaluation/contracts.js';
 import type { PersistentMemoryKind } from '../memory/records.js';
+import type { FinishReason, ModelCallPurpose } from '../models/contracts.js';
+import type { ModelErrorKind } from '../models/errors.js';
 import type { ToolErrorCode } from '../tools/contracts.js';
 
 /** Bump when the envelope or a payload changes shape incompatibly. */
@@ -30,7 +32,9 @@ export const AGENT_EVENT_TYPES = [
   'MEMORY_RETRIEVED',
   'MEMORY_WRITTEN',
   'DECISION_CREATED',
+  'MODEL_CALL_STARTED',
   'MODEL_CALL_COMPLETED',
+  'MODEL_CALL_FAILED',
   'TOOL_SELECTED',
   'TOOL_STARTED',
   'TOOL_COMPLETED',
@@ -120,14 +124,42 @@ export interface AgentEventPayloads {
     /** Only present when the model actually reported a confidence. */
     readonly confidence?: number;
   };
+  /**
+   * Model-call telemetry. Safe metadata only: provider, model, purpose,
+   * timing, token usage, outcome. Never prompts, completions, or credentials.
+   */
+  MODEL_CALL_STARTED: {
+    readonly modelCallId: ModelCallId;
+    readonly purpose: ModelCallPurpose;
+    readonly provider: string;
+    readonly model: string;
+    /** 1 for the first attempt at a logical call; higher after a retry or re-ask. */
+    readonly attempt: number;
+  };
   MODEL_CALL_COMPLETED: {
     readonly modelCallId: ModelCallId;
-    readonly purpose: string;
+    readonly purpose: ModelCallPurpose;
     readonly provider: string;
     readonly model: string;
     readonly inputTokens: number;
     readonly outputTokens: number;
+    /** False when the provider returned no usage and the counts above are zeros, not measurements. */
+    readonly usageReported: boolean;
     readonly latencyMs: number;
+    readonly finishReason: FinishReason;
+    readonly attempt: number;
+  };
+  MODEL_CALL_FAILED: {
+    readonly modelCallId: ModelCallId;
+    readonly purpose: ModelCallPurpose;
+    readonly provider: string;
+    readonly model: string;
+    readonly latencyMs: number;
+    readonly errorKind: ModelErrorKind;
+    /** Redacted, human-readable. */
+    readonly message: string;
+    readonly retryable: boolean;
+    readonly attempt: number;
   };
   TOOL_SELECTED: { readonly toolName: string; readonly intent: string; readonly attempt: number };
   TOOL_STARTED: { readonly toolName: string };

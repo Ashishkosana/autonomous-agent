@@ -74,6 +74,7 @@ describe('ModelProvider contract', () => {
       latencyMs: response.latencyMs,
       finishReason: response.finishReason,
       startedAt: '2026-01-01T00:00:00.000Z',
+      attempt: 1,
     };
     expect(record.usage).toEqual({ inputTokens: 120, outputTokens: 30 });
     expect(record.descriptor).toEqual({ provider: 'scripted', model: 'scripted-v0' });

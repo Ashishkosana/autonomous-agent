@@ -1,6 +1,7 @@
 import type { GoalId, IsoTimestamp, ModelCallId, RunId } from '../domain/ids.js';
 import type { JsonSchema, ParseResult } from '../domain/parse.js';
 import type { ToolDescriptor } from '../tools/contracts.js';
+import type { ModelErrorKind } from './errors.js';
 
 /**
  * The model layer is the agent's *intelligence*: it proposes plans, actions,
@@ -35,11 +36,21 @@ export interface ModelRequest {
   readonly messages: readonly ModelMessage[];
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
+  /**
+   * Telemetry only: 1 for the first attempt at a logical call, incremented by
+   * the retry/re-ask layer. Providers ignore it.
+   */
+  readonly attempt?: number;
 }
 
 export interface ModelUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /**
+   * False when the provider returned no usage block and the counts are zeros
+   * rather than measurements. Absent means reported.
+   */
+  readonly reported?: boolean;
 }
 
 export type FinishReason = 'stop' | 'length' | 'tool_call' | 'content_filter' | 'error';
@@ -122,4 +133,31 @@ export interface ModelCallRecord {
   readonly latencyMs: number;
   readonly finishReason: FinishReason;
   readonly startedAt: IsoTimestamp;
+  readonly attempt: number;
+}
+
+/** Emitted before a call is made, so a hung provider is visible on the dashboard. */
+export interface ModelCallStart {
+  readonly modelCallId: ModelCallId;
+  readonly runId: RunId;
+  readonly goalId?: GoalId;
+  readonly purpose: ModelCallPurpose;
+  readonly descriptor: ModelDescriptor;
+  readonly startedAt: IsoTimestamp;
+  readonly attempt: number;
+}
+
+/** Telemetry row for a call that threw. `message` is already redacted by the provider. */
+export interface ModelCallFailure {
+  readonly modelCallId: ModelCallId;
+  readonly runId: RunId;
+  readonly goalId?: GoalId;
+  readonly purpose: ModelCallPurpose;
+  readonly descriptor: ModelDescriptor;
+  readonly latencyMs: number;
+  readonly startedAt: IsoTimestamp;
+  readonly errorKind: ModelErrorKind;
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly attempt: number;
 }

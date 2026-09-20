@@ -2,7 +2,8 @@ import { asMemoryRecordId, type MemoryRecordId } from '../../src/domain/ids.js';
 import type { RunLimits } from '../../src/domain/run.js';
 import type { Evaluator } from '../../src/evaluation/contracts.js';
 import type { KnowledgeRecord, PersistentMemoryRecord } from '../../src/memory/records.js';
-import type { ToolActionProposal } from '../../src/models/contracts.js';
+import type { ModelProvider, ToolActionProposal } from '../../src/models/contracts.js';
+import type { ResilienceOptions } from '../../src/models/resilient-provider.js';
 import type { ExecutionEnvironment } from '../../src/sandbox/execution-environment.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { createAutonomousRun } from '../../src/agent/runtime/create-run.js';
@@ -127,6 +128,10 @@ export interface ScenarioOptions {
   readonly goalStatement?: string;
   /** Defaults to a fresh FakeExecutionEnvironment; integration tests pass a real one. */
   readonly environment?: ExecutionEnvironment;
+  /** Defaults to a scripted provider fed by `turns`; tests of real adapters pass their own. */
+  readonly model?: ModelProvider;
+  /** Defaults to no retries and no re-asks so each scripted turn is consumed exactly once. */
+  readonly resilience?: Partial<ResilienceOptions>;
 }
 
 export interface Scenario {
@@ -162,7 +167,8 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
     ids,
     clock,
     events,
-    model: provider,
+    model: options.model ?? provider,
+    resilience: { maxRetries: 0, maxReasks: 0, sleep: async () => {}, ...options.resilience },
     tools: new ToolRegistry().register(writeFileTool).register(echoTool),
     environment,
     evaluator,

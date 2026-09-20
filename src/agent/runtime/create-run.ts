@@ -6,6 +6,7 @@ import type { MemoryRetriever } from '../../memory/retrieval.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { ModelProvider } from '../../models/contracts.js';
 import { InstrumentedModelProvider } from '../../models/instrumented-provider.js';
+import { ResilientModelProvider, type ResilienceOptions } from '../../models/resilient-provider.js';
 import type { ExecutionEnvironment } from '../../sandbox/execution-environment.js';
 import type { ToolRegistry } from '../../tools/registry.js';
 import { ModelActionSelector } from '../action-selector.js';
@@ -29,6 +30,12 @@ export interface AutonomousRunConfig extends RuntimeOptions {
   readonly evaluator: Evaluator;
   readonly memoryStore: MemoryStore;
   readonly retriever: MemoryRetriever;
+  /**
+   * Bounded retry/re-ask behaviour around the model. Defaults are tuned for
+   * real providers; deterministic tests pass zeros so every scripted turn is
+   * consumed exactly once.
+   */
+  readonly resilience?: Partial<ResilienceOptions>;
 }
 
 export interface AutonomousRun {
@@ -39,7 +46,9 @@ export interface AutonomousRun {
 /**
  * Composition root for one autonomous run. Wires the default components
  * around the caller-supplied model, tools, environment, evaluator and memory.
- * Everything supplied is an interface; nothing here knows about vendors.
+ * Everything supplied is an interface; nothing here knows about vendors —
+ * the caller picks the model with `resolveModelConfig`/`createModelProvider`
+ * (`src/models/config.ts`) or hands in a scripted one.
  */
 export function createAutonomousRun(config: AutonomousRunConfig): AutonomousRun {
   const session = new RunSession({
@@ -52,12 +61,20 @@ export function createAutonomousRun(config: AutonomousRunConfig): AutonomousRun 
     ...(config.successCriteria ? { successCriteria: config.successCriteria } : {}),
   });
 
-  const model = new InstrumentedModelProvider(config.model, {
-    runId: session.runId,
-    goalId: session.goal.goalId,
-    clock: config.clock,
-    onCall: (record) => session.recordModelCall(record),
-  });
+  // Resilience wraps instrumentation so that every attempt — including the
+  // ones that fail or get re-asked — is a separately observable model call.
+  const model = new ResilientModelProvider(
+    new InstrumentedModelProvider(config.model, {
+      runId: session.runId,
+      goalId: session.goal.goalId,
+      clock: config.clock,
+      ids: config.ids,
+      onStarted: (record) => session.recordModelCallStarted(record),
+      onCall: (record) => session.recordModelCall(record),
+      onFailed: (record) => session.recordModelCallFailed(record),
+    }),
+    config.resilience ?? {},
+  );
 
   const runtime = new AgentRuntime(
     {
