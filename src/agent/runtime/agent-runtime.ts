@@ -438,6 +438,7 @@ export class AgentRuntime {
         checksTotal: evaluation.checks.length,
         gapCount: evaluation.gaps.length,
         summary: evaluation.summary,
+        toolStatus: evaluation.toolStatus,
       },
       { ...correlation, evaluationId: evaluation.evaluationId },
     );

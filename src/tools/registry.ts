@@ -51,7 +51,7 @@ function finishTiming(clock: Clock, timing: InvocationTiming) {
   return {
     startedAt: timing.startedAt,
     finishedAt: clock.now(),
-    durationMs: Math.max(0, clock.monotonicMs() - timing.startedMs),
+    durationMs: Math.max(0, Math.round(clock.monotonicMs() - timing.startedMs)),
   };
 }
 

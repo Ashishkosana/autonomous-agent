@@ -215,6 +215,8 @@ export interface AgentEventPayloads {
     readonly checksTotal: number;
     readonly gapCount: number;
     readonly summary: string;
+    /** Tool-level status of what was judged, so "tool ok, task failed" is visible in the stream. */
+    readonly toolStatus: 'ok' | 'error' | 'none';
   };
   GOAL_COMPLETED: { readonly summary: string; readonly iterations: number };
   GOAL_FAILED: {

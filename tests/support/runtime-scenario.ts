@@ -134,6 +134,8 @@ export interface ScenarioOptions {
   readonly resilience?: Partial<ResilienceOptions>;
   /** Defaults to a FixedClock; real-infrastructure tests pass a real clock so latencies and duration limits are real. */
   readonly clock?: Clock;
+  /** Defaults to the two test doubles (fs.write, echo); Phase 5 scenarios pass the standard registry. */
+  readonly tools?: ToolRegistry;
 }
 
 export interface Scenario {
@@ -171,7 +173,7 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
     events,
     model: options.model ?? provider,
     resilience: { maxRetries: 0, maxReasks: 0, sleep: async () => {}, ...options.resilience },
-    tools: new ToolRegistry().register(writeFileTool).register(echoTool),
+    tools: options.tools ?? new ToolRegistry().register(writeFileTool).register(echoTool),
     environment,
     evaluator,
     memoryStore: store,
