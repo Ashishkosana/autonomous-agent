@@ -161,7 +161,29 @@ Descriptors serialise to 4,352 characters. Usage was reported by the server on e
   Phase 8 decisions to be made with this evidence — not tool-level accommodations for one
   model.
 
-E006_BATCH2_PLACEHOLDER
+Batch 2 (three more runs after the assertion fix, same model and configuration, 2026-09-21;
+**3 passed / 0 failed** — every run reached a terminal status with consistent telemetry,
+15 = 15 + 0, 6 = 6 + 0 and 4 = 4 + 0 model calls; 11–29 s per call):
+
+| Run | Status          | Iter | Tool calls | Model calls | Tools chosen  | What really happened                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --- | --------------- | ---- | ---------- | ----------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `failed`        | 1    | 1          | 4           | `shell.run`   | The model wrote its _expected output into the command_: `python -c "print(sum(range(1, 101)))" \| stdout: The sum is 5050` → `sh: python: not found`, `sh: stdout:: not found`, exit 127 (only `python3` exists). Evaluation `failure`; the revision was invalid (`changeReason` missing) → `GOAL_FAILED`.                                                                                                                                                              |
+| 2   | `limit_reached` | 6    | 6          | 15          | `code.run` ×6 | Six Python programs, six revisions — **every revision diagnosed the same cause** ("the output file/directory is not ensured") and every program still crashed with `FileNotFoundError: /workspace/out/result.txt` (the directory was never created), or called `fs.write`/`fs.exists` from Python (`NameError`), or was written on one line (`SyntaxError`). Program 4 exited 0 yet the evaluator still found no file. 6 strategy changes, 12 memory writes, no lesson. |
+| 3   | `failed`        | 2    | 2          | 6           | `code.run` ×2 | Both programs `FileNotFoundError` on the missing `out/` directory. The one revision that passed validation carried the meta-reason _"Corrected the issue with changeReason being empty when strategyChanged is true"_ — the model repaired the schema error, not the approach; the next revision failed validation → `GOAL_FAILED`.                                                                                                                                     |
+
+Catalogue cost in batch 2 was consistent with batch 1: `select_action` 1,229–1,328 input
+tokens, `create_plan` 372, `revise_plan` 801–1,363. Across both batches: **6 runs, 1 goal
+reached** (batch 1 run 3, by writing the answer directly rather than computing it).
+
+Additional observations from batch 2 (evidence for Phase 8, not acted on): (v) the
+dominant real-world failure was environmental — a missing parent directory — which the
+model diagnosed correctly six times in words and never fixed in code; a lesson-shaped
+memory ("create the directory before writing") is exactly what Phase 6/8 memory should be
+able to carry into a later run. (vi) Under the scenario harness's `maxReasks: 0`, one
+invalid revision ends the run; the production default (`maxReasks: 1`) would re-ask once
+with the validation message — an accepted deviation, but it means these `failed` statuses
+overstate fatality relative to production configuration. (vii) The shipped `code.run`
+descriptor names `python3`; the model still typed `python` when it reached for `shell.run`.
 
 ## E-004 — Real model drives the loop (Phase 4, EXECUTED against a real local model — reviewed)
 
