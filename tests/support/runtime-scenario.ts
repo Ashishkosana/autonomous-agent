@@ -1,13 +1,24 @@
-import { asMemoryRecordId, type Clock, type MemoryRecordId } from '../../src/domain/ids.js';
+import {
+  asMemoryRecordId,
+  type Clock,
+  type IdGenerator,
+  type MemoryRecordId,
+} from '../../src/domain/ids.js';
 import type { RunLimits } from '../../src/domain/run.js';
 import type { Evaluator } from '../../src/evaluation/contracts.js';
 import type { KnowledgeRecord, PersistentMemoryRecord } from '../../src/memory/records.js';
-import type { ModelProvider, ToolActionProposal } from '../../src/models/contracts.js';
+import type { MemoryStore } from '../../src/memory/store.js';
+import type {
+  ModelProvider,
+  StructuredModelRequest,
+  ToolActionProposal,
+} from '../../src/models/contracts.js';
 import type { ResilienceOptions } from '../../src/models/resilient-provider.js';
 import type { ExecutionEnvironment } from '../../src/sandbox/execution-environment.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { createAutonomousRun } from '../../src/agent/runtime/create-run.js';
 import type { RunOutcome } from '../../src/agent/runtime/agent-runtime.js';
+import type { RunSession } from '../../src/agent/runtime/run-session.js';
 import {
   ArtifactRequirementEvaluator,
   type ArtifactRequirement,
@@ -103,6 +114,20 @@ export const reviseTurn = ({
   },
 });
 
+/**
+ * Like `reviseTurn`, but echoes whichever task the rendered plan shows as
+ * in progress — for runs whose ids are not the deterministic `task-1`. This
+ * reads the same prompt a real model would read.
+ */
+export const reviseTurnEchoingTask = (options: { strategyChanged: boolean }) => ({
+  structured: (request: StructuredModelRequest<unknown>) => {
+    const prompt = request.messages.map((m) => m.content).join('\n');
+    const match = /- \[([^\]]+)\] \(in_progress\)/.exec(prompt);
+    if (!match?.[1]) throw new Error('reviseTurnEchoingTask: no in-progress task in the prompt');
+    return reviseTurn({ ...options, keepTaskId: match[1] }).structured;
+  },
+});
+
 export const DEFAULT_LIMITS: RunLimits = {
   maxIterations: 10,
   maxToolCalls: 10,
@@ -124,7 +149,7 @@ export interface ScenarioOptions {
   readonly limits?: Partial<RunLimits>;
   readonly seed?: readonly PersistentMemoryRecord[];
   readonly requirement?: ArtifactRequirement;
-  readonly evaluator?: (ids: SequentialIdGenerator, clock: Clock) => Evaluator;
+  readonly evaluator?: (ids: IdGenerator, clock: Clock) => Evaluator;
   readonly goalStatement?: string;
   /** Defaults to a fresh FakeExecutionEnvironment; integration tests pass a real one. */
   readonly environment?: ExecutionEnvironment;
@@ -136,23 +161,28 @@ export interface ScenarioOptions {
   readonly clock?: Clock;
   /** Defaults to the two test doubles (fs.write, echo); Phase 5 scenarios pass the standard registry. */
   readonly tools?: ToolRegistry;
+  /** Defaults to a fresh InMemoryMemoryStore; Phase 6 scenarios pass a durable store that outlives the run. */
+  readonly store?: MemoryStore;
+  /** Defaults to SequentialIdGenerator (`run-1`, `mem-1`, …); runs that share a durable store must pass UniqueIdGenerator. */
+  readonly ids?: IdGenerator;
 }
 
 export interface Scenario {
-  readonly ids: SequentialIdGenerator;
+  readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly events: InMemoryEventBus;
-  readonly store: InMemoryMemoryStore;
+  readonly store: MemoryStore;
   readonly environment: ExecutionEnvironment;
   readonly provider: ScriptedModelProvider;
+  readonly session: RunSession;
   run(): Promise<RunOutcome>;
 }
 
 export async function buildScenario(options: ScenarioOptions): Promise<Scenario> {
-  const ids = new SequentialIdGenerator();
+  const ids = options.ids ?? new SequentialIdGenerator();
   const clock = options.clock ?? new FixedClock();
   const events = new InMemoryEventBus();
-  const store = new InMemoryMemoryStore();
+  const store = options.store ?? new InMemoryMemoryStore();
   const environment = options.environment ?? new FakeExecutionEnvironment();
   const provider = new ScriptedModelProvider(options.turns, ids);
   for (const record of options.seed ?? [seedKnowledge]) await store.put(record);
@@ -165,7 +195,7 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
         clock,
       );
 
-  const { runtime } = createAutonomousRun({
+  const { runtime, session } = createAutonomousRun({
     goalStatement: options.goalStatement ?? GOAL_STATEMENT,
     limits: { ...DEFAULT_LIMITS, ...options.limits },
     ids,
@@ -180,7 +210,7 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
     retriever: new LexicalRetriever(store, clock),
   });
 
-  return { ids, clock, events, store, environment, provider, run: () => runtime.run() };
+  return { ids, clock, events, store, environment, provider, session, run: () => runtime.run() };
 }
 
 /** Sequence number of the n-th event (0-based) of a type, or -1 if absent. */

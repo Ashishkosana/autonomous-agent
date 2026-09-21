@@ -13,6 +13,7 @@ import type {
 
 interface ScriptedTurn {
   readonly text?: string;
+  /** A value, or a function of the request for turns that must echo ids the run generated. */
   readonly structured?: unknown;
   readonly proposal?: ToolActionProposal;
   readonly inputTokens?: number;
@@ -62,7 +63,11 @@ export class ScriptedModelProvider implements ModelProvider {
   ): Promise<StructuredModelResponse<T>> {
     this.requests.push(request);
     const turn = this.nextTurn();
-    return { ...this.base(turn), raw: turn.structured, parsed: request.parse(turn.structured) };
+    const structured =
+      typeof turn.structured === 'function'
+        ? (turn.structured as (request: StructuredModelRequest<T>) => unknown)(request)
+        : turn.structured;
+    return { ...this.base(turn), raw: structured, parsed: request.parse(structured) };
   }
 
   async requestToolAction(request: ToolActionRequest): Promise<ToolActionResponse> {
