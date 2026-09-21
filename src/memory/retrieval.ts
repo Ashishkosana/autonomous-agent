@@ -44,16 +44,30 @@ export interface MemoryRetriever {
 }
 
 /**
- * Meaning-based lookup. Embedding model and vector store are OPEN
- * (ADR-006, Phase 7). Retrievers compose this with the MemoryStore.
+ * Meaning-based lookup (ADR-006). The index stores one vector per record and
+ * answers "which indexed records are closest to this text". Retrievers
+ * compose it with the MemoryStore: the store's metadata filter decides what
+ * is *eligible*, the index decides what is *similar*.
  */
 export interface SemanticMatch {
   readonly recordId: MemoryRecordId;
+  /** Cosine similarity in [-1, 1]; higher is closer. */
   readonly score: number;
+}
+
+export interface SemanticSearchOptions {
+  /** Only these records are candidates (the metadata-filtered set). Unset means every indexed record. */
+  readonly within?: readonly MemoryRecordId[];
 }
 
 export interface SemanticIndex {
   index(recordId: MemoryRecordId, text: string): Promise<void>;
   remove(recordId: MemoryRecordId): Promise<void>;
-  search(text: string, limit: number): Promise<readonly SemanticMatch[]>;
+  /** Whether a comparable vector exists for the record (same embedding model). */
+  contains(recordId: MemoryRecordId): Promise<boolean>;
+  search(
+    text: string,
+    limit: number,
+    options?: SemanticSearchOptions,
+  ): Promise<readonly SemanticMatch[]>;
 }

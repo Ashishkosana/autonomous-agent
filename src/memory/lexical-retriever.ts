@@ -6,6 +6,7 @@ import type {
   RetrievalQuery,
   RetrievalResult,
 } from './retrieval.js';
+import { searchableText } from './searchable-text.js';
 import type { MemoryStore } from './store.js';
 
 /**
@@ -79,30 +80,23 @@ export class LexicalRetriever implements MemoryRetriever {
   }
 
   private tokenize(text: string): Set<string> {
-    const out = new Set<string>();
-    for (const raw of text.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
-      if (raw.length >= this.minTermLength && !STOPWORDS.has(raw)) out.add(raw);
-    }
-    return out;
+    return lexicalTerms(text, this.minTermLength);
   }
 }
 
-/** The fields a human would search; raw payloads are never indexed. */
-export function searchableText(record: PersistentMemoryRecord): string {
-  const base = `${record.summary} ${record.tags.join(' ')}`;
-  switch (record.kind) {
-    case 'knowledge':
-      return `${base} ${record.title} ${record.content}`;
-    case 'experience':
-      return `${base} ${record.toolName} ${record.inputSummary}`;
-    case 'decision':
-      return `${base} ${record.context} ${record.reason}`;
-    case 'lesson':
-      return `${base} ${record.statement} ${record.applicability.join(' ')}`;
+export { searchableText };
+
+/** Distinct lower-cased terms of at least `minTermLength` characters, stopwords removed. */
+export function lexicalTerms(text: string, minTermLength = 3): Set<string> {
+  const out = new Set<string>();
+  for (const raw of text.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    if (raw.length >= minTermLength && !STOPWORDS.has(raw)) out.add(raw);
   }
+  return out;
 }
 
-function compareHits(a: RetrievalHit, b: RetrievalHit): number {
+/** Deterministic order: score descending, newer first, then record id. */
+export function compareHits(a: RetrievalHit, b: RetrievalHit): number {
   if (b.score !== a.score) return b.score - a.score;
   if (a.record.createdAt !== b.record.createdAt)
     return a.record.createdAt < b.record.createdAt ? 1 : -1;

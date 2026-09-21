@@ -189,6 +189,7 @@ describe('architecture rules', () => {
         .sort();
     expect(importers((spec) => spec === 'node:sqlite')).toEqual([
       'memory/sqlite/sqlite-memory-store.ts',
+      'memory/sqlite/sqlite-semantic-index.ts',
     ]);
     expect(importers((spec) => spec === 'node:fs' || spec.startsWith('node:fs/'))).toEqual([
       'storage/local/filesystem-storage.ts',
