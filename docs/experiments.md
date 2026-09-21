@@ -230,7 +230,44 @@ STRATEGY_CHANGED → PLAN_UPDATED → … success` sequence. `OutcomeLearner` de
    inflated by the failures). Retrieval is ranked and capped, but nothing yet prunes records
    that are true-but-state-dependent.
 
-**Measurement defect found and fixed during the batch.** The first-attempt marker check
+**Batch 2 (2026-09-21, 2 pairs, 4 runs, corrected measurement — every tool proposal
+recorded; 2/2 tests passed).**
+
+| Pair | Run | Status                                         | Iter | Model calls | Retrieved                                    | Cited | Proposed writes (`## Sources` present?) | Evaluations                        | Lessons |
+| ---- | --- | ---------------------------------------------- | ---- | ----------- | -------------------------------------------- | ----- | --------------------------------------- | ---------------------------------- | ------- |
+| 1    | 1   | **failed** (invalid revision: empty tasks)     | 1    | 4           | 0                                            | —     | no                                      | failure                            | 0       |
+| 1    | 2   | **failed** (invalid revision: no changeReason) | 4    | 11          | 2 = Run 1's failed experience + its decision | no    | no, no, no, no                          | failure ×4                         | 0       |
+| 2    | 1   | limit_reached (4/4)                            | 4    | 6           | 0                                            | —     | no, **yes**, yes, yes                   | failure, success, success, success | **1**   |
+| 2    | 2   | limit_reached (4/4)                            | 4    | 6           | **5 = Run 1's** (2 exp, 2 dec, **1 lesson**) | no    | **yes**, no, yes, yes                   | success, failure, success, success | **1**   |
+
+Store after pair 2: 0 knowledge / 8 experience / 8 decision / **2 lesson**.
+
+- **Pair 1 — memory of a failure was copied as a plan.** Run 1 planned "create a directory
+  for report and research sources", wrote a file with no marker, and died when its revision
+  came back with an empty task list (`GOAL_FAILED`, unrecoverable, honest). Run 2 retrieved
+  exactly that failed experience (`fs.write for "Create a directory…" → failure`) and its
+  decision — and its strategy became _"Plan to create a directory for the report and its
+  research sources in the /workspace/source_files directory."_ It repeated the approach the
+  memory marked as failed, four times, and died the same way (revision without
+  `changeReason`). Second instance of copying without reasoning; this time the copied record
+  said **failure** in plain text.
+- **Pair 2 — the first real-model lesson, and the first first-attempt improvement with a
+  lesson in the prompt.** Run 1's retry echoed the task id, so `OutcomeLearner` produced a
+  contrast lesson (_"failed approach … → Artifact is missing the required '## Sources'
+  section; succeeded with …"_). Run 2 retrieved it, and its **first proposed write already
+  contained `## Sources`** (Run 1's did not); its strategy was _"Create the 'Sources' section
+  within the /workspace/report.md document using fs.write"_ — the lesson's remedy, in the
+  model's words, uncited. Run 2 then wrote `# Sources` (one `#`) on its second task, was
+  failed by the evaluator, recovered, and produced a second lesson that names exactly that
+  mistake. Neither run completed: both planned three tasks and hit the 4-iteration limit
+  while re-writing an already-valid file.
+- **Across both batches (8 runs):** retrieval correct 4/4 times; citations 0/4; the model
+  visibly reused retrieved text in 3/4 Run 2 plans; first-attempt evaluator verdict improved
+  Run 1 → Run 2 in 2 pairs (b1p1, b2p2), was unchanged-bad in 1 (b2p1) and got worse in 1
+  (b1p2); goal completion 1/8 (b1p1 Run 1, without memory). Lessons: 2 of 8 runs, both in
+  batch 2 pair 2, both from retries that echoed the task id.
+
+**Measurement defect found and fixed during batch 1.** The first-attempt marker check
 originally read the _archived_ artifact — which is the file at the end of the run, i.e.
 the last write, since every attempt targets the same path — so it reported `true` for a
 first write that the evaluator had just failed. The test now records every tool proposal
@@ -240,13 +277,16 @@ fields are therefore unreliable; the `evaluations[0]` verdicts above are the tru
 signal for batch 1 (the evaluator judged the real file at the time).
 
 **Verdict for Phase 6.** Persistence → retrieval → presentation is **PROVEN** with a real
-model. Influence on a later decision is **demonstrated but not beneficial**: the only
-clearly memory-driven behaviour observed (pair 2) was harmful. Cross-run _improvement_ is
-**NOT claimed**. This is the first hard evidence for the Phase 8 design (evaluation + real
-learning): experience records need the preconditions under which they held, retrieval
-needs to weigh applicability to the _current_ state, and the learner needs a contrast
-signal that survives plan expansion (goal-level, not only task-level). These are recorded
-as findings, not implemented here.
+model (4/4 pairs). Influence on a later decision is **demonstrated and mixed**: the model
+reuses retrieved text whether it is marked success or failure (b1p2 copied a
+state-dependent success and failed; b2p1 copied a recorded failure and failed), and in the
+one pair where a real _lesson_ was retrieved (b2p2) the first attempt was better. Cross-run
+_improvement_ is **NOT claimed** — n = 4, no control, no completion. This is the first hard
+evidence for the Phase 8 design (evaluation + real learning): raw experience records are
+copied, not weighed, so retrieval should prefer lessons and carry outcome polarity
+explicitly; experience records need the preconditions under which they held; and the
+learner needs a contrast signal that survives plan expansion (goal-level, not only
+task-level). These are recorded as findings, not implemented here.
 
 ## E-006 — Real model × real tools × real Linux (Phase 5, EXECUTED — evidence recorded)
 
