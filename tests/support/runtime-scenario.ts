@@ -16,7 +16,7 @@ import { FixedClock, SequentialIdGenerator } from './deterministic.js';
 import { FakeExecutionEnvironment } from './fake-execution-environment.js';
 import { InMemoryEventBus } from './in-memory-event-bus.js';
 import { InMemoryMemoryStore } from './in-memory-memory-store.js';
-import { KeywordOnlyRetriever } from './keyword-only-retriever.js';
+import { LexicalRetriever } from '../../src/memory/lexical-retriever.js';
 import { ScriptedModelProvider } from './scripted-model-provider.js';
 import { echoTool, writeFileTool } from './tools.js';
 
@@ -177,7 +177,7 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
     environment,
     evaluator,
     memoryStore: store,
-    retriever: new KeywordOnlyRetriever(store, clock),
+    retriever: new LexicalRetriever(store, clock),
   });
 
   return { ids, clock, events, store, environment, provider, run: () => runtime.run() };

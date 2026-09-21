@@ -182,6 +182,32 @@ describe('architecture rules', () => {
     }
   });
 
+  it('durable state has named owners: node:sqlite only in the SQLite store, node:fs only in the filesystem storage', () => {
+    const importers = (predicate: (spec: string) => boolean) =>
+      srcFiles
+        .filter((file) => importSpecifiers(readFileSync(file, 'utf8')).some(predicate))
+        .map((file) => relative(SRC_ROOT, file).split(/[\\/]/).join('/'))
+        .sort();
+    expect(importers((spec) => spec === 'node:sqlite')).toEqual([
+      'memory/sqlite/sqlite-memory-store.ts',
+    ]);
+    expect(importers((spec) => spec === 'node:fs' || spec.startsWith('node:fs/'))).toEqual([
+      'storage/local/filesystem-storage.ts',
+    ]);
+  });
+
+  it('the agent core composes memory and storage through their contracts, never a concrete backend', () => {
+    for (const file of srcFiles) {
+      const rel = relative(SRC_ROOT, file).split(/[\\/]/).join('/');
+      if (!rel.startsWith('agent/')) continue;
+      for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {
+        expect(spec, `${rel} imports a concrete backend ${spec}`).not.toMatch(
+          /memory\/(sqlite|config)|storage\/(local|config)/,
+        );
+      }
+    }
+  });
+
   it('the agent core never depends on a concrete execution environment', () => {
     for (const file of srcFiles) {
       const rel = relative(SRC_ROOT, file);

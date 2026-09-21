@@ -18,7 +18,7 @@ import { PERSISTENT_MEMORY_KINDS, UNVALIDATED } from '../src/memory/records.js';
 import { FixedClock } from './support/deterministic.js';
 import { makePlan } from './support/fixtures.js';
 import { InMemoryMemoryStore } from './support/in-memory-memory-store.js';
-import { KeywordOnlyRetriever } from './support/keyword-only-retriever.js';
+import { LexicalRetriever } from '../src/memory/lexical-retriever.js';
 
 const PREVIOUS_RUN = asRunId('run-0');
 const PREVIOUS_GOAL = asGoalId('goal-0');
@@ -131,7 +131,7 @@ describe('memory records and store', () => {
 describe('behavioral: previous experience is retrievable for a related problem', () => {
   it('retrieves the failed and successful approaches plus the lesson, not unrelated knowledge', async () => {
     const store = await seededStore();
-    const retriever = new KeywordOnlyRetriever(store, new FixedClock());
+    const retriever = new LexicalRetriever(store, new FixedClock());
 
     const result = await retriever.retrieve({
       retrievalId: asRetrievalId('ret-1'),
@@ -154,7 +154,7 @@ describe('behavioral: previous experience is retrievable for a related problem',
 
   it('a plan can cite the retrieval and records that shaped it', async () => {
     const store = await seededStore();
-    const retriever = new KeywordOnlyRetriever(store, new FixedClock());
+    const retriever = new LexicalRetriever(store, new FixedClock());
     const retrieval = await retriever.retrieve({
       retrievalId: asRetrievalId('ret-1'),
       text: 'install python pdf library',
