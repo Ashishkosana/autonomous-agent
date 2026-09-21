@@ -18,6 +18,7 @@ import type {
 } from '../domain/ids.js';
 import type { EvaluationVerdict } from '../evaluation/contracts.js';
 import type { PersistentMemoryKind } from '../memory/records.js';
+import type { RetrievalSignal } from '../memory/retrieval.js';
 import type { FinishReason, ModelCallPurpose } from '../models/contracts.js';
 import type { ModelErrorKind } from '../models/errors.js';
 import type { ToolErrorCode } from '../tools/contracts.js';
@@ -113,6 +114,10 @@ export interface AgentEventPayloads {
     readonly recordIds: readonly MemoryRecordId[];
     readonly kinds: readonly PersistentMemoryKind[];
     readonly durationMs: number;
+    /** Which retrieval stages actually ran — `semantic` appears only when the index answered. */
+    readonly signalsUsed: readonly RetrievalSignal[];
+    /** Stages that were configured but could not run this time (e.g. embedding endpoint down), with why. */
+    readonly degraded: readonly { readonly signal: RetrievalSignal; readonly reason: string }[];
   };
   MEMORY_WRITTEN: {
     readonly recordId: MemoryRecordId;

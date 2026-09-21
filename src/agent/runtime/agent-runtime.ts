@@ -135,6 +135,8 @@ export class AgentRuntime {
         recordIds,
         kinds: [...new Set(result.hits.map((h) => h.record.kind))],
         durationMs: result.durationMs,
+        signalsUsed: result.signalsUsed,
+        degraded: result.degraded ?? [],
       },
       { retrievalId, memoryRecordIds: recordIds },
     );

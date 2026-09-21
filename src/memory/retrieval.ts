@@ -20,6 +20,12 @@ export interface RetrievalQuery {
   readonly correlation: RunCorrelation;
 }
 
+export interface RetrievalDegradation {
+  readonly signal: RetrievalSignal;
+  /** Already redacted by the failing component; safe to put in an event. */
+  readonly reason: string;
+}
+
 export interface RetrievalHit {
   readonly record: PersistentMemoryRecord;
   /** Higher is more relevant; scale is retriever-specific but monotonic. */
@@ -34,6 +40,12 @@ export interface RetrievalResult {
   readonly hits: readonly RetrievalHit[];
   /** Which stages actually ran, so "semantic retrieval" is never claimed if it did not. */
   readonly signalsUsed: readonly RetrievalSignal[];
+  /**
+   * Stages the retriever is configured for but could not run this time
+   * (e.g. the embedding endpoint failed). Absent or empty means nothing was
+   * skipped. A degraded retrieval is still a valid retrieval — it just says so.
+   */
+  readonly degraded?: readonly RetrievalDegradation[];
   readonly startedAt: IsoTimestamp;
   readonly finishedAt: IsoTimestamp;
   readonly durationMs: number;
