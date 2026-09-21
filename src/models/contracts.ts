@@ -29,6 +29,9 @@ export type ModelCallPurpose =
   | 'diagnose_failure'
   | 'extract_lesson'
   | 'summarize'
+  /** Embedding calls made by the semantic index (see `embeddings.ts`); token cost is real cost. */
+  | 'embed_memory'
+  | 'embed_query'
   | 'other';
 
 export interface ModelRequest {

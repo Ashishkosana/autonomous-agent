@@ -79,6 +79,30 @@ export function completion(options: CompletionOptions = {}): unknown {
   };
 }
 
+/** Builds a well-formed `/embeddings` envelope; `indices` lets a test scramble the order. */
+export function embeddingsEnvelope(
+  vectors: readonly (readonly number[])[],
+  options: { readonly indices?: readonly number[]; readonly promptTokens?: number | null } = {},
+): unknown {
+  return {
+    object: 'list',
+    data: vectors.map((embedding, i) => ({
+      object: 'embedding',
+      index: options.indices?.[i] ?? i,
+      embedding,
+    })),
+    model: 'test-embedding-model',
+    ...(options.promptTokens === null
+      ? {}
+      : {
+          usage: {
+            prompt_tokens: options.promptTokens ?? 12,
+            total_tokens: options.promptTokens ?? 12,
+          },
+        }),
+  };
+}
+
 export class FakeOpenAIServer {
   readonly requests: RecordedRequest[] = [];
   private readonly replies: ScriptedReply[] = [];

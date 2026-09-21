@@ -127,19 +127,18 @@ describe('architecture rules', () => {
       .map((file) => relative(SRC_ROOT, file).split(/[\\/]/).join('/'))
       .sort();
     expect(callers).toEqual([
-      'models/openai-compatible/provider.ts',
+      'models/openai-compatible/transport.ts',
       'sandbox/cloudflare/http-sandbox-client.ts',
     ]);
   });
 
   it('the model layer keeps credentials out of what it exposes: no field named apiKey on providers', () => {
     // Providers receive the key through config and must not retain it as a plain property.
-    const providerSource = readFileSync(
-      join(SRC_ROOT, 'models', 'openai-compatible', 'provider.ts'),
-      'utf8',
-    );
-    expect(providerSource).not.toMatch(/this\.apiKey/);
-    expect(providerSource).not.toMatch(/private\s+(readonly\s+)?apiKey/);
+    for (const name of ['provider.ts', 'embedding-provider.ts', 'transport.ts']) {
+      const source = readFileSync(join(SRC_ROOT, 'models', 'openai-compatible', name), 'utf8');
+      expect(source, name).not.toMatch(/this\.apiKey/);
+      expect(source, name).not.toMatch(/private\s+(readonly\s+)?apiKey/);
+    }
   });
 
   it('the Cloudflare SDK is imported only by the gateway Worker, never by src or tests', () => {
