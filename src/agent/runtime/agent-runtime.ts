@@ -5,6 +5,7 @@ import {
   type MemoryRecordId,
   type TaskId,
 } from '../../domain/ids.js';
+import type { Observation } from '../../domain/observation.js';
 import type { Plan, PlanTask } from '../../domain/plan.js';
 import type { EvaluationResult } from '../../evaluation/contracts.js';
 import type { Evaluator } from '../../evaluation/contracts.js';
@@ -19,7 +20,14 @@ import type { MemoryRetriever, RetrievalResult } from '../../memory/retrieval.js
 import type { MemoryStore } from '../../memory/store.js';
 import type { ExecutionEnvironment } from '../../sandbox/execution-environment.js';
 import type { ToolRegistry } from '../../tools/registry.js';
-import type { ActionSelector, Executor, Learner, Planner, TaskAttempt } from '../contracts.js';
+import type {
+  ActionSelector,
+  Executor,
+  KnowledgeIngestor,
+  Learner,
+  Planner,
+  TaskAttempt,
+} from '../contracts.js';
 import { nextTask, withRemainingTasksSkipped, withTaskStatus } from './plan-tasks.js';
 import type { RunSession } from './run-session.js';
 import type { RunState } from '../../domain/run.js';
@@ -31,6 +39,8 @@ export interface RuntimeComponents {
   readonly executor: Executor;
   readonly evaluator: Evaluator;
   readonly learner: Learner;
+  /** Absent means observations never become Knowledge memory (the pre-Phase-7 loop). */
+  readonly ingestor?: KnowledgeIngestor;
   readonly memoryStore: MemoryStore;
   readonly retriever: MemoryRetriever;
   readonly tools: ToolRegistry;
@@ -322,6 +332,7 @@ export class AgentRuntime {
       );
     }
     await this.writeRecord(learning.experience, recordCorrelation);
+    await this.ingestKnowledge(task, action, observation, recordCorrelation);
     for (const lesson of learning.lessons) {
       this.lessons.push(lesson.lessonId);
       session.emit(
@@ -426,6 +437,45 @@ export class AgentRuntime {
       },
     );
     this.setPlan(revised);
+  }
+
+  /**
+   * What the world said becomes Knowledge memory, regardless of the verdict:
+   * a page fetched for a task that then failed evaluation is still a page
+   * the agent has read. Ingestion never decides the task's outcome.
+   */
+  private async ingestKnowledge(
+    task: PlanTask,
+    action: Action,
+    observation: Observation,
+    correlation: EventCorrelation,
+  ): Promise<void> {
+    const { session, ingestor } = this.c;
+    if (!ingestor) return;
+    const ingestion = await ingestor.ingest({
+      correlation: action.correlation,
+      goal: session.goal,
+      task,
+      action,
+      observation,
+    });
+    for (const record of ingestion.knowledge) {
+      const source = record.sources[0];
+      session.emit(
+        'KNOWLEDGE_INGESTED',
+        {
+          recordId: record.recordId,
+          toolName: source?.toolName ?? action.toolName,
+          source: source?.url ?? source?.title ?? record.title,
+          title: record.title,
+          keptChars: record.content.length,
+          truncated: record.content.endsWith('…'),
+          confidence: record.confidence,
+        },
+        { ...correlation, memoryRecordIds: [record.recordId] },
+      );
+      await this.writeRecord(record, correlation);
+    }
   }
 
   // -------------------------------------------------------------- helpers

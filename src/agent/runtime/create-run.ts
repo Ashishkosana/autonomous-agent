@@ -10,7 +10,9 @@ import { ResilientModelProvider, type ResilienceOptions } from '../../models/res
 import type { ExecutionEnvironment } from '../../sandbox/execution-environment.js';
 import type { ToolRegistry } from '../../tools/registry.js';
 import { ModelActionSelector } from '../action-selector.js';
+import type { KnowledgeIngestor } from '../contracts.js';
 import { ToolExecutor } from '../executor.js';
+import { ObservationKnowledgeIngestor } from '../knowledge-ingestor.js';
 import { OutcomeLearner } from '../learner.js';
 import { ModelPlanner } from '../planner.js';
 import { AgentRuntime, type RuntimeOptions } from './agent-runtime.js';
@@ -30,6 +32,8 @@ export interface AutonomousRunConfig extends RuntimeOptions {
   readonly evaluator: Evaluator;
   readonly memoryStore: MemoryStore;
   readonly retriever: MemoryRetriever;
+  /** Defaults to the rule-based `ObservationKnowledgeIngestor`; pass one to replace it. */
+  readonly ingestor?: KnowledgeIngestor;
   /**
    * Bounded retry/re-ask behaviour around the model. Defaults are tuned for
    * real providers; deterministic tests pass zeros so every scripted turn is
@@ -84,6 +88,7 @@ export function createAutonomousRun(config: AutonomousRunConfig): AutonomousRun 
       executor: new ToolExecutor(config.tools, config.environment, session),
       evaluator: config.evaluator,
       learner: new OutcomeLearner(config.ids, config.clock),
+      ingestor: config.ingestor ?? new ObservationKnowledgeIngestor(config.ids, config.clock),
       memoryStore: config.memoryStore,
       retriever: config.retriever,
       tools: config.tools,

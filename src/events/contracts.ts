@@ -33,6 +33,7 @@ export const AGENT_EVENT_TYPES = [
   'MEMORY_SEARCH_STARTED',
   'MEMORY_RETRIEVED',
   'MEMORY_WRITTEN',
+  'KNOWLEDGE_INGESTED',
   'DECISION_CREATED',
   'MODEL_CALL_STARTED',
   'MODEL_CALL_COMPLETED',
@@ -118,6 +119,21 @@ export interface AgentEventPayloads {
     readonly signalsUsed: readonly RetrievalSignal[];
     /** Stages that were configured but could not run this time (e.g. embedding endpoint down), with why. */
     readonly degraded: readonly { readonly signal: RetrievalSignal; readonly reason: string }[];
+  };
+  /**
+   * Content an action brought back from the world became a knowledge record.
+   * Emitted before the record's MEMORY_WRITTEN; says where the content came
+   * from and how much of it was kept — never the content itself.
+   */
+  KNOWLEDGE_INGESTED: {
+    readonly recordId: MemoryRecordId;
+    readonly toolName: string;
+    /** URL or path the content came from. */
+    readonly source: string;
+    readonly title: string;
+    readonly keptChars: number;
+    readonly truncated: boolean;
+    readonly confidence: number;
   };
   MEMORY_WRITTEN: {
     readonly recordId: MemoryRecordId;

@@ -4,7 +4,12 @@ import type { Observation } from '../domain/observation.js';
 import type { Plan, PlanTask } from '../domain/plan.js';
 import type { RunCorrelation } from '../domain/provenance.js';
 import type { EvaluationResult } from '../evaluation/contracts.js';
-import type { DecisionRecord, ExperienceRecord, LessonRecord } from '../memory/records.js';
+import type {
+  DecisionRecord,
+  ExperienceRecord,
+  KnowledgeRecord,
+  LessonRecord,
+} from '../memory/records.js';
 import type { RetrievalResult } from '../memory/retrieval.js';
 import type { WorkingMemorySnapshot } from '../memory/working.js';
 import type { ToolDescriptor } from '../tools/contracts.js';
@@ -82,4 +87,30 @@ export interface LearningOutput {
 
 export interface Learner {
   learn(input: LearningInput): Promise<LearningOutput>;
+}
+
+export interface IngestionInput {
+  readonly correlation: RunCorrelation;
+  readonly goal: Goal;
+  readonly task: PlanTask;
+  readonly action: Action;
+  readonly observation: Observation;
+}
+
+export interface IngestionOutput {
+  /** Knowledge records to persist, oldest first. Empty when the observation carried nothing to keep. */
+  readonly knowledge: readonly KnowledgeRecord[];
+  /** Why nothing was ingested, when that is a decision rather than an absence (for the dashboard). */
+  readonly skipped?: string;
+}
+
+/**
+ * Turns what an action brought back from the world into Knowledge memory —
+ * the only one of the four categories the loop did not write before Phase 7.
+ * Distinct from the Learner (which records what the agent *did* and how it
+ * went) so that "what the world said" and "what worked" stay separate records
+ * with separate confidence.
+ */
+export interface KnowledgeIngestor {
+  ingest(input: IngestionInput): Promise<IngestionOutput>;
 }

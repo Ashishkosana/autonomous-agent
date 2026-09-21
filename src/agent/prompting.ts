@@ -60,10 +60,22 @@ export function renderMemory(memory: PresentedMemory): string {
   ].join('\n');
 }
 
+/**
+ * Knowledge content is untrusted text from the world and can be long; the
+ * prompt gets an excerpt, quoted as data, never the whole record.
+ */
+const KNOWLEDGE_EXCERPT_CHARS = 400;
+
 function describeRecord(record: PersistentMemoryRecord): string {
   switch (record.kind) {
-    case 'knowledge':
-      return ` — ${record.content}`;
+    case 'knowledge': {
+      const source = record.sources[0]?.url ?? record.sources[0]?.title;
+      const excerpt =
+        record.content.length > KNOWLEDGE_EXCERPT_CHARS
+          ? `${record.content.slice(0, KNOWLEDGE_EXCERPT_CHARS)}…`
+          : record.content;
+      return ` — ${record.title}${source ? ` (source: ${source})` : ''}: "${excerpt.replace(/\s+/g, ' ')}"`;
+    }
     case 'experience':
       return ` — outcome: ${record.outcome}`;
     case 'decision':

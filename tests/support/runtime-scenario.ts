@@ -7,6 +7,7 @@ import {
 import type { RunLimits } from '../../src/domain/run.js';
 import type { Evaluator } from '../../src/evaluation/contracts.js';
 import type { KnowledgeRecord, PersistentMemoryRecord } from '../../src/memory/records.js';
+import type { MemoryRetriever } from '../../src/memory/retrieval.js';
 import type { MemoryStore } from '../../src/memory/store.js';
 import type {
   ModelProvider,
@@ -165,6 +166,8 @@ export interface ScenarioOptions {
   readonly store?: MemoryStore;
   /** Defaults to SequentialIdGenerator (`run-1`, `mem-1`, …); runs that share a durable store must pass UniqueIdGenerator. */
   readonly ids?: IdGenerator;
+  /** Defaults to the LexicalRetriever over the store; Phase 7 scenarios pass a HybridRetriever. */
+  readonly retriever?: (store: MemoryStore, clock: Clock) => MemoryRetriever;
 }
 
 export interface Scenario {
@@ -207,7 +210,9 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
     environment,
     evaluator,
     memoryStore: store,
-    retriever: new LexicalRetriever(store, clock),
+    retriever: options.retriever
+      ? options.retriever(store, clock)
+      : new LexicalRetriever(store, clock),
   });
 
   return { ids, clock, events, store, environment, provider, session, run: () => runtime.run() };
