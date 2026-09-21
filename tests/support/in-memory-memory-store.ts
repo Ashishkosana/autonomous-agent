@@ -5,13 +5,20 @@ import type {
   PersistentMemoryRecord,
 } from '../../src/memory/records.js';
 import type { MemoryQuery, MemoryStore } from '../../src/memory/store.js';
+import { assertStorableRecord } from '../../src/memory/validate.js';
 
-/** Map-backed MemoryStore for tests. Not a persistence design. */
+/**
+ * Map-backed MemoryStore for tests. Not a persistence design, but it obeys the
+ * same contract as the real store (`tests/support/memory-store-contract.ts`):
+ * validated puts, upsert by id, oldest-first ordering with stable ties.
+ */
 export class InMemoryMemoryStore implements MemoryStore {
   private readonly records = new Map<MemoryRecordId, PersistentMemoryRecord>();
 
   async put(record: PersistentMemoryRecord): Promise<void> {
-    this.records.set(record.recordId, record);
+    assertStorableRecord(record);
+    // Map preserves first-insertion order, so an upsert keeps its position.
+    this.records.set(record.recordId, structuredClone(record));
   }
 
   async get(recordId: MemoryRecordId): Promise<PersistentMemoryRecord | undefined> {
@@ -27,8 +34,10 @@ export class InMemoryMemoryStore implements MemoryStore {
   }
 
   async query(query: MemoryQuery): Promise<readonly PersistentMemoryRecord[]> {
-    const matches = [...this.records.values()].filter((record) => matchesQuery(record, query));
-    return query.limit === undefined ? matches : matches.slice(0, query.limit);
+    const matches = [...this.records.values()]
+      .filter((record) => matchesQuery(record, query))
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+    return query.limit === undefined ? matches : matches.slice(0, Math.max(0, query.limit));
   }
 
   async count(query: MemoryQuery = {}): Promise<number> {

@@ -8,7 +8,17 @@ import type {
 /**
  * Structured storage for persistent memory records. Backs the "metadata
  * filtering" stage of retrieval and is the source of truth for every record.
- * The concrete database is an OPEN decision (ADR-005, Phase 6).
+ *
+ * V1 backend: SQLite through `node:sqlite` (`./sqlite/`, ADR-005). The
+ * contract below is what every backend — including the test store — must
+ * satisfy; `tests/support/memory-store-contract.ts` enforces it.
+ *
+ * Ordering: `query` returns records oldest-first by `createdAt`; records with
+ * the same timestamp keep the order in which they were first stored. `limit`
+ * therefore means "the earliest N matches". `count` ignores `limit`.
+ *
+ * `put` is an upsert keyed on `recordId`: storing a record again replaces its
+ * content and tags but keeps its original position in the order.
  */
 export interface MemoryQuery {
   readonly kinds?: readonly PersistentMemoryKind[];
@@ -16,11 +26,13 @@ export interface MemoryQuery {
   readonly goalId?: GoalId;
   /** All listed tags must be present on the record. */
   readonly tags?: readonly string[];
+  /** Strictly after this ISO timestamp. */
   readonly createdAfter?: string;
   readonly limit?: number;
 }
 
 export interface MemoryStore {
+  /** Rejects records that violate the shared base shape with `MemoryStoreError('invalid_record')`. */
   put(record: PersistentMemoryRecord): Promise<void>;
   get(recordId: MemoryRecordId): Promise<PersistentMemoryRecord | undefined>;
   getOfKind<K extends PersistentMemoryKind>(
