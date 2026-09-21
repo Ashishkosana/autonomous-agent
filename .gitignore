@@ -20,3 +20,9 @@ coverage/
 
 # Evidence dumps from real-sandbox runs live outside the repo; guard against accidents
 agent-sandbox-evidence/
+
+# Local persistent memory / storage (AGENT_MEMORY_PATH, AGENT_STORAGE_ROOT suggested location)
+.agent/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

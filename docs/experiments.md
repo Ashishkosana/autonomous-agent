@@ -22,7 +22,12 @@ Run #2 for a related goal and measurably change Run #2's plan or actions.
 the plan of Run #2 with its `informedBy` provenance; a diff of Run #2's behaviour versus
 a control run with memory disabled.
 
-**Status.** Not yet runnable — requires Phases 2–7.
+**Status.** Partially runnable after Phase 6: E-007 executes steps 1–3 with a scripted
+model (retrieval and citation across processes and sandboxes proven); E-007b executed them
+with a real model (retrieval and presentation proven; the model never cited memory, and the
+one clearly memory-driven decision was harmful — see E-007b). The full experiment — a
+research goal with real knowledge ingestion and a control run — still requires Phase 7
+(semantic memory) and Phase 8 (evaluation/learning), which E-007b's findings now inform.
 
 ## E-000 — Autonomous recovery inside one run (Phase 2, passing)
 
@@ -98,6 +103,150 @@ proposes `code.run` with `sum(range(1, 100))` — an off-by-one that writes `495
 real execution: the tool layer reported the truth (the program ran), the evaluator judged
 the artifact, and the loop recovered without any exit-code heuristics. Docker-isolated
 reproduction is **PENDING** on the developer machine.
+
+## E-007 — Memory outlives the process and the sandbox (Phase 6, PASSED on a real Linux kernel)
+
+**Hypothesis.** Records the runtime writes through the real `MemoryStore` in one OS process
+are retrieved by the runtime in a _different_ OS process with a _different_ sandbox, are
+shown to the planner, and can be cited by the new plan; an artifact archived from the
+first sandbox is readable after that sandbox is destroyed. Nothing survives between the
+runs except the SQLite file and the storage directory.
+
+**Design.** `tests/memory/e-007-cross-process.test.ts` (parent) spawns
+`tests/support/e007/child.ts` twice with `vitest run --config tests/support/e007/vitest.config.ts`
+— two real child processes with their own pids. Each child opens `memory.sqlite` and
+`storage/`, starts a fresh `LocalLinuxEnvironment` (namespaces runtime in the cloud VM;
+Docker on the developer machine via `AGENT_LOCAL_DOCKER=1`), runs the E-000 goal with the
+scripted model, the standard `fs.*` tools and `UniqueIdGenerator`, archives the report
+with `archiveArtifacts`, destroys the sandbox and writes an evidence file. Run 1's script is
+approach A → failure → strategy change → approach B → lesson. Run 2's script cites the
+lesson id it reads from Run 1's evidence file — the planner keeps a citation only if the
+record was actually presented, so a broken retrieval path fails the test instead of
+passing it. The parent asserts everything only knowable across the boundary and, as a
+third process, opens the same file and storage itself.
+
+**Result (2026-09-21, cloud VM, namespace runtime; 6/6 passed; evidence
+`e007-cross-process.json`).**
+
+| Fact                                                   | Run 1 (pid 61314)                                             | Run 2 (pid 61503)                                                                                                                       |
+| ------------------------------------------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Sandbox                                                | `e007-run1-…`, report absent at start, present at end         | `e007-run2-…`, **report absent at start** (fresh), `stopped` after destroy                                                              |
+| `MEMORY_RETRIEVED`                                     | 0 hits (empty store)                                          | **5 hits — exactly Run 1's five record ids** (2 experience, 2 decision, 1 lesson)                                                       |
+| Planner prompt                                         | `RELEVANT MEMORY: none retrieved`                             | contains the full lesson statement (_"…failed approach 'Write the report from known findings' (fs.write) → failure … succeeded with…"_) |
+| `PLAN_CREATED.informedByMemoryRecordIds`               | `[]`                                                          | **`[<Run 1 lesson id>]`**, `informedByRetrievalIds` = the one retrieval                                                                 |
+| Iterations / retries / strategy changes                | 2 / 1 / 1                                                     | 1 / 0 / 0, no `FAILURE_DETECTED`                                                                                                        |
+| Records written                                        | 2 decision, 2 experience, 1 lesson                            | 1 decision, 1 experience (no contrast → no lesson, by the learner's rule)                                                               |
+| Store after run (knowledge/experience/decision/lesson) | 0 / 2 / 2 / 1                                                 | 0 / 3 / 3 / 1 — Run 1's records untouched                                                                                               |
+| Artifacts archived (`ARTIFACT_STORED`)                 | 2 (drafts A and B, `artifacts/<run1>/<artifactId>/report.md`) | 1; **Run 1's archived report read back in this process and contains `## Sources`**                                                      |
+
+The parent, as a third process, counted 7 records (5 owned by Run 1's `runId`, 2 by
+Run 2's), followed the lesson's provenance to Run 1's successful experience, and listed all
+three archived objects. Event order in Run 2: `MEMORY_RETRIEVED` precedes `PLAN_CREATED`;
+`GOAL_COMPLETED` precedes `ARTIFACT_STORED`.
+
+**What the experiment found before it passed.** The first execution used the deterministic
+test id generator in both processes. Run 2's `run-1`, `mem-1`, `mem-2` collided with Run 1's
+and — because `put` is an upsert — **silently overwrote two of Run 1's records**; the store
+did exactly what it was told. Two changes followed: `UniqueIdGenerator` (80-bit random ids)
+for anything that reaches durable storage, and a store-level rule that a record id owned by
+another run cannot be overwritten (`MemoryStoreError('conflict')`, in the contract suite).
+A second finding: the scripted revision hard-coded `task-1`; with unique ids the revised
+plan no longer matched the in-progress task, so the runtime treated it as a new task — no
+`RETRY_STARTED`, no lesson. That is correct runtime behaviour (it mirrors the E-004
+"plans expand" observation when a real model fails to echo a task id) and the script now
+echoes the id it reads from the rendered plan, like a model would.
+
+**Caveat.** The model is scripted in both runs. E-007 proves persistence, retrieval,
+presentation and citation across process and sandbox boundaries — not that a model
+_decides differently_ because of memory. That is E-007b.
+
+## E-007b — A real model runs twice against one persistent memory (Phase 6, EXECUTED — evidence recorded)
+
+**Question.** E-007 proved the plumbing with a scripted model. Does a _real_ model, shown
+what a previous run remembered, plan or act differently — and if so, better?
+
+**Design.** `tests/integration/model/real-model-memory.test.ts` (gated real-model suite,
+`AGENT_E007B_PAIRS=n`). Each pair: Run 1 with an empty `memory.sqlite`, a fresh Linux
+sandbox, the E-000 goal, only the `fs.*` tool family (so catalogue cost and tool confusion
+stay out of the comparison), limits 4 iterations / 6 tool calls / 16 model calls; records
+persisted, report archived, sandbox destroyed. Run 2: fresh sandbox, same file, same goal.
+The test **asserts only the honesty of the machinery** (terminal status; model-call
+telemetry balances; `GOAL_COMPLETED` iff status `completed`, and then the report really has
+the marker; Run 1 retrieved nothing; Run 2 retrieved _only_ Run 1's records; a
+non-empty retrieval reaches the planner prompt as `RELEVANT MEMORY (cite record ids…)`).
+Whether the model cited or acted on memory is recorded as evidence, never asserted — a 3B
+model ignoring what it is shown is a finding, not a failure of the store.
+
+Setup as E-004/E-006: Ollama `qwen2.5:3b`, CPU-only cloud VM (~12 tokens/s),
+`AGENT_MODEL_TOOL_MODE=json`, namespace runtime (real interpreters, no isolation).
+
+**Batch 1 (2026-09-21, 2 pairs, 4 runs; 2/2 tests passed; evidence
+`model-e007b-pair-{1,2}.json`).**
+
+| Pair | Run | Status              | Iter | Model calls (failed) | Retrieved                             | `informedByMemoryRecordIds` | Evaluations                                           | Records written          | Lessons |
+| ---- | --- | ------------------- | ---- | -------------------- | ------------------------------------- | --------------------------- | ----------------------------------------------------- | ------------------------ | ------- |
+| 1    | 1   | **completed**       | 3    | 6 (1)                | 0                                     | `[]`                        | failure, success, success                             | 3 decision, 3 experience | 0       |
+| 1    | 2   | limit_reached (4/4) | 4    | 5 (0)                | **5 = all of Run 1's** (3 exp, 2 dec) | `[]`                        | success, success, success, success                    | 4 decision, 4 experience | 0       |
+| 2    | 1   | limit_reached (4/4) | 4    | 7 (0)                | 0                                     | `[]`                        | failure, failure, success, success                    | 4 decision, 4 experience | 0       |
+| 2    | 2   | limit_reached (4/4) | 4    | 11 (1)               | **5 = all of Run 1's** (3 exp, 2 dec) | `[]`                        | failure, failure, failure, failure (4× `TOOL_FAILED`) | 4 decision, 4 experience | 0       |
+
+Store after each pair: 0 knowledge / 8 experience (pair 1: 7) / 8 decision (pair 1: 7) / **0 lesson**.
+
+**What the evidence shows.**
+
+1. **The memory path works with a real model.** In both pairs Run 2's `MEMORY_RETRIEVED`
+   named exactly Run 1's records and nothing else; the planner prompt carried them verbatim
+   (`- [mem-…] (experience) fs.write for "…" → success`). Run 2's sandboxes were fresh
+   (report absent at start). Every model-call and evaluation event balanced.
+2. **The model never cited memory.** `PLAN_CREATED.informedByMemoryRecordIds` was `[]` in
+   all four runs, although Run 2's prompt asked it to cite record ids it relied on. The
+   scripted E-007 model cited; `qwen2.5:3b` did not.
+3. **The model _did_ read memory — and it copied rather than reasoned.** Pair 2 Run 2's
+   strategy is Run 1's task description nearly word-for-word ("Create the initial template
+   for the /workspace/report.md file by writing the first paragraph and sourcing section"),
+   and its first action was **`fs.read`** on `/workspace/report.md` in a sandbox where the
+   file did not exist yet — because the retrieved experience said
+   `fs.read for "Assemble sources…" → success`. That experience was true in Run 1's state
+   (the file existed by then) and false in Run 2's fresh sandbox. Run 2 then failed the same
+   way four times (4× `TOOL_FAILED`, 4× `FAILURE_DETECTED`, 4 strategy changes, 1 retry,
+   11 model calls) and ended with **no report at all**, where Run 1 had produced a valid
+   one. **Memory made this run measurably worse.** An experience record that says only
+   "tool X → success" without the state that made it succeed is a hazard, not help.
+4. **Pair 1 went the other way, weakly.** Run 1's first write was an empty file (evaluator:
+   failure); Run 2's first write already contained `## Sources` (evaluator: success at the
+   first attempt). But Run 2 then planned six tasks and hit the 4-iteration limit while
+   re-writing a file that already satisfied the requirement, so Run 1 completed and Run 2 did
+   not. One pair is not evidence of improvement, and the next pair contradicts it.
+5. **Zero lessons in four real-model runs**, including runs with a `FAILURE_DETECTED →
+STRATEGY_CHANGED → PLAN_UPDATED → … success` sequence. `OutcomeLearner` derives a lesson
+   only from a contrast _on the same task_ (success after a failed attempt of that task).
+   The real model, on revision, supersedes the failed task with new ones instead of echoing
+   its id and retrying it (the "plans expand" finding from E-004/E-006), so the success lands
+   on a different task and no contrast exists. E-004 Run 3 produced a lesson precisely
+   because that run did echo the task id. The scripted E-007 model produced one because the
+   script echoes ids. **With this model, per-task contrast learning almost never fires.**
+6. **Cost of memory in the prompt.** Run 2's `create_plan` prompt carried five records
+   (~1.1 kB); Run 2 input tokens were 5 856 vs 3 022 (pair 1) and 12 442 vs 5 236 (pair 2,
+   inflated by the failures). Retrieval is ranked and capped, but nothing yet prunes records
+   that are true-but-state-dependent.
+
+**Measurement defect found and fixed during the batch.** The first-attempt marker check
+originally read the _archived_ artifact — which is the file at the end of the run, i.e.
+the last write, since every attempt targets the same path — so it reported `true` for a
+first write that the evaluator had just failed. The test now records every tool proposal
+the model made (`proposals: [{tool, hadMarker}]`) straight from the provider, and derives
+the first-attempt fact from the first proposal. Batch 1's `firstAttempt.contentHadRequiredMarker`
+fields are therefore unreliable; the `evaluations[0]` verdicts above are the trustworthy
+signal for batch 1 (the evaluator judged the real file at the time).
+
+**Verdict for Phase 6.** Persistence → retrieval → presentation is **PROVEN** with a real
+model. Influence on a later decision is **demonstrated but not beneficial**: the only
+clearly memory-driven behaviour observed (pair 2) was harmful. Cross-run _improvement_ is
+**NOT claimed**. This is the first hard evidence for the Phase 8 design (evaluation + real
+learning): experience records need the preconditions under which they held, retrieval
+needs to weigh applicability to the _current_ state, and the learner needs a contrast
+signal that survives plan expansion (goal-level, not only task-level). These are recorded
+as findings, not implemented here.
 
 ## E-006 — Real model × real tools × real Linux (Phase 5, EXECUTED — evidence recorded)
 
@@ -179,10 +328,11 @@ Additional observations from batch 2 (evidence for Phase 8, not acted on): (v) t
 dominant real-world failure was environmental — a missing parent directory — which the
 model diagnosed correctly six times in words and never fixed in code; a lesson-shaped
 memory ("create the directory before writing") is exactly what Phase 6/8 memory should be
-able to carry into a later run. (vi) Under the scenario harness's `maxReasks: 0`, one
-invalid revision ends the run; the production default (`maxReasks: 1`) would re-ask once
-with the validation message — an accepted deviation, but it means these `failed` statuses
-overstate fatality relative to production configuration. (vii) The shipped `code.run`
+able to carry into a later run. (vi) E-006 runs with the production recovery settings
+(`maxRetries 2, maxReasks 1`): each `failed` status above means the revision was invalid
+_twice_ — the original answer and the re-ask that quoted the validation error back to the
+model. The model call counts show it (run 1: plan, select, revise, re-asked revise = 4).
+(vii) The shipped `code.run`
 descriptor names `python3`; the model still typed `python` when it reached for `shell.run`.
 
 ## E-004 — Real model drives the loop (Phase 4, EXECUTED against a real local model — reviewed)

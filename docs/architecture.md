@@ -6,16 +6,16 @@ the decisions that shaped it.
 
 ## 1. Concepts and where they live
 
-| Concept                   | Responsibility                                      | Location                | Status after Phase 5                                                                                                                  |
+| Concept                   | Responsibility                                      | Location                | Status after Phase 6                                                                                                                  |
 | ------------------------- | --------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract; OpenAI-compatible fetch adapter (ADR-003); resilience + telemetry decorators; env config; E-004 run with a real local model |
 | **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry + nine standard tools acting only through `ExecutionEnvironment` (ADR-004); proven on real Linux                  |
 | **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters                                                                                          |
-| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records, working memory impl, store/retrieval contracts                                                                               |
+| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records; working memory; `SqliteMemoryStore` + `LexicalRetriever` (ADR-005); proven across processes and sandboxes (E-007)            |
 | **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                                                                                               |
 | **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                                                                                                           |
 | **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred                                             |
-| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                                                                                                 |
+| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | `FilesystemStorage` + `archiveArtifacts` (ADR-005); R2 remains the production candidate                                               |
 | **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                                                                                               |
 | **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 12                                                                                                                              |
 
@@ -241,13 +241,33 @@ Retrieval (`src/memory/retrieval.ts`) returns a small ranked set and records
 `signalsUsed` and per-hit `matchedBy` so the UI can never claim a stage that did not run.
 `SemanticIndex` is the seam where an embedding/vector implementation plugs in.
 
+**Storage (Phase 6, ADR-005).** All persistent kinds share one `MemoryStore`, backed by
+`SqliteMemoryStore` over `node:sqlite`: the full record as JSON is the source of truth and
+the indexed columns/tags are derived from it, so field-level schemas can evolve without
+migrations. `put` is an upsert by `recordId` that **refuses to overwrite a record owned by
+another run** — E-007 showed two processes with deterministic ids silently destroying each
+other's records, which is why every durable id now comes from `UniqueIdGenerator`.
+Artifacts leave the sandbox through `archiveArtifacts` into a `PersistentStorage`
+(`FilesystemStorage` in V1), emitting `ARTIFACT_STORED`; this happens at the composition
+root, never inside the loop. `LexicalRetriever` (metadata filter through the store, then
+distinct-term overlap, deterministic ranking) is the production retriever; the semantic
+stage remains unclaimed until ADR-006. `src/agent/` cannot name any of these backends
+(architecture rule).
+
+**What E-007b taught about memory content (input to Phases 7–8, not yet implemented).**
+An experience record that says only `fs.read → success` is true in the state that produced
+it and misleading in a fresh sandbox; a real model copied it and failed four times. Records
+need the preconditions under which they held, retrieval needs to weigh applicability to the
+_current_ state, and a lesson signal must survive plan expansion (goal-level contrast, not
+only per-task). See `docs/experiments.md` (E-007b).
+
 ## 6. Execution environment boundary
 
 `ExecutionEnvironment` (`src/sandbox/execution-environment.ts`) is the only way tools
 touch the world: commands, files, processes, state. It imports nothing. Provider
 identity is data (`descriptor.provider`), not a type. `CloudflareSandboxEnvironment`
-(`src/sandbox/cloudflare/`) implements it; a `LocalLinuxEnvironment` can follow without
-touching the runtime.
+(`src/sandbox/cloudflare/`) and `LocalLinuxEnvironment` (`src/sandbox/local/`, the
+verified V1 environment) both implement it; the runtime cannot tell them apart.
 
 The Cloudflare adapter is layered so the vendor SDK stays out of `src/` entirely:
 
@@ -320,20 +340,20 @@ categories · semantic retrieval requirement · structured events · real-time o
 
 ### Open (must be discussed before choosing)
 
-| Decision                             | Where it will plug in                                    | Planned ADR                            |
-| ------------------------------------ | -------------------------------------------------------- | -------------------------------------- |
-| Concrete free model / endpoint       | `AGENT_MODEL_*` configuration (adapter decided: ADR-003) | evidence-driven, after real-model runs |
-| Structured database                  | `MemoryStore`                                            | ADR-005                                |
-| Vector / semantic retrieval          | `SemanticIndex`, `MemoryRetriever`                       | ADR-006                                |
-| Browser automation implementation    | a `Tool` family + possibly environment support           | ADR-007                                |
-| Web search backend                   | `SearchProvider` (`src/tools/web/search-provider.ts`)    | with ADR-007 or earlier if needed      |
-| Frontend framework                   | `ui/`                                                    | later                                  |
-| Exact memory schemas                 | `src/memory/records.ts`                                  | later                                  |
-| Growth formula                       | consumer of telemetry + `LessonValidation`               | later                                  |
-| Cloudflare deployment topology       | `src/api/`, `wrangler.jsonc`                             | later                                  |
-| Event transport                      | `EventSink` / `EventSource` implementations              | later                                  |
-| Persistence strategy per memory type | `MemoryStore` / `PersistentStorage` composition          | later                                  |
-| Evaluator architecture               | `Evaluator` implementations                              | later                                  |
+| Decision                             | Where it will plug in                                    | Planned ADR                                                                                                                      |
+| ------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Concrete free model / endpoint       | `AGENT_MODEL_*` configuration (adapter decided: ADR-003) | evidence-driven, after real-model runs                                                                                           |
+| Structured database                  | `MemoryStore`                                            | ADR-005                                                                                                                          |
+| Vector / semantic retrieval          | `SemanticIndex`, `MemoryRetriever`                       | ADR-006                                                                                                                          |
+| Browser automation implementation    | a `Tool` family + possibly environment support           | ADR-007                                                                                                                          |
+| Web search backend                   | `SearchProvider` (`src/tools/web/search-provider.ts`)    | with ADR-007 or earlier if needed                                                                                                |
+| Frontend framework                   | `ui/`                                                    | later                                                                                                                            |
+| Exact memory schemas                 | `src/memory/records.ts`                                  | later                                                                                                                            |
+| Growth formula                       | consumer of telemetry + `LessonValidation`               | later                                                                                                                            |
+| Cloudflare deployment topology       | `src/api/`, `wrangler.jsonc`                             | later                                                                                                                            |
+| Event transport                      | `EventSink` / `EventSource` implementations              | later                                                                                                                            |
+| Persistence strategy per memory type | `MemoryStore` / `PersistentStorage` composition          | V1: one SQLite store for all persistent kinds, objects on the filesystem (ADR-005); per-type split later if evidence asks for it |
+| Evaluator architecture               | `Evaluator` implementations                              | later                                                                                                                            |
 
 ### Implementation details (reversible, chosen by default)
 
@@ -352,7 +372,7 @@ throwing for untrusted input.
 | 3B    | Local Docker `ExecutionEnvironment` for free development               | done; verified on real Docker (developer machine, 25/25, E-003)                                                                                                                                                        |
 | 4     | Real model intelligence behind `ModelProvider`                         | adapter + config + recovery + telemetry TESTED (fake HTTP server, E-000 over the wire); E-004 executed with a real local model (Ollama, cloud VM) — reviewed                                                           |
 | 5     | Real tool capabilities (filesystem, terminal, code, HTTP, web, git)    | done (ADR-004); PROVEN on real Linux (namespaces, cloud VM: tools 11/11, E-005 6/6, public Internet); Docker-isolated run PENDING developer machine; E-006 real model × real tools recorded; `web.search` backend OPEN |
-| 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) |                                                                                                                                                                                                                        |
+| 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) | done (ADR-005); PROVEN across processes and sandboxes on real Linux (E-007, namespaces, cloud VM); E-007b real-model memory evidence recorded; Docker-isolated run PENDING developer machine                           |
 | 7     | Semantic memory + knowledge ingestion                                  |                                                                                                                                                                                                                        |
 | 8     | Evaluation + real learning, validated-improvement metrics              |                                                                                                                                                                                                                        |
 | 9     | Browser + GitHub + MCP capabilities                                    |                                                                                                                                                                                                                        |

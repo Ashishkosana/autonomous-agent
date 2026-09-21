@@ -11,8 +11,9 @@ relevant, change strategy because of it, and make that growth observable?
 
 ## Status
 
-**Phase 5 — real tool capabilities: PROVEN on real Linux, Docker-isolated run pending.**
-The repository contains the contracts, domain models and event schema from
+**Phase 6 — real persistent structured memory: PROVEN across processes and sandboxes on
+real Linux; real-model memory influence recorded (not beneficial yet); Docker-isolated run
+pending.** The repository contains the contracts, domain models and event schema from
 Phase 1, the autonomous runtime (`src/agent/runtime/`) from Phase 2, the
 `CloudflareSandboxEnvironment` adapter plus gateway Worker from Phase 3,
 `LocalLinuxEnvironment` (`src/sandbox/local/`, ADR-002) from Phase 3B — the verified V1
@@ -23,7 +24,12 @@ and structural credential containment; and, new in Phase 5, the **standard tool 
 (`src/tools/`, ADR-004): `fs.read/write/list/delete`, `shell.run`, `code.run`
 (python/node/sh), `http.request`, `web.fetch`, `git` — every one acting only through
 `ExecutionEnvironment`, emitting `COMMAND_*`/`FILE_*` events and declaring artifacts, with
-`web.search` present as a seam awaiting a backend decision.
+`web.search` present as a seam awaiting a backend decision; and, new in Phase 6, **real
+persistent memory** (ADR-005): `SqliteMemoryStore` on Node's built-in `node:sqlite`
+(`src/memory/sqlite/`), `FilesystemStorage` for artifacts (`src/storage/local/`),
+`archiveArtifacts` emitting `ARTIFACT_STORED`, the `LexicalRetriever` as the production
+retriever, `UniqueIdGenerator` for every id that reaches durable storage, and
+`AGENT_MEMORY_*` / `AGENT_STORAGE_*` configuration resolved at composition roots.
 
 Evidence status: the runtime loop is proven with fakes (E-000) and replayed through the
 real model adapter over a real local HTTP server; the **real Docker suite including E-003
@@ -36,10 +42,17 @@ the **standard tools run on a real Linux kernel** (namespace runtime on the clou
 11/11 including public-Internet HTTP, and E-005 — a Python program that exits 0 yet fails
 evaluation until the loop fixes it — 6/6); **E-006 ran a real local model against the real
 nine-tool catalogue in real Linux** (evidence, including the catalogue's prompt cost, in
-`docs/experiments.md`); the same tool and E-005 suites inside an isolated Docker container
-are **PENDING** on the developer machine (`npm run test:local`); **real Cloudflare
-verification is DEFERRED — requires Workers Paid**. There is still no persistence and no
-dashboard (Phases 6–13). See
+`docs/experiments.md`); **memory outlives the process and the sandbox** (E-007: two child
+OS processes, two fresh Linux sandboxes, one SQLite file — Run 2 retrieved exactly Run 1's
+records, the planner was shown the lesson and cited it, Run 1's archived report was read
+back after its sandbox was destroyed; 6/6); **E-007b ran a real local model twice against
+one persistent memory** (4 runs: retrieval and presentation worked every time, the model
+never cited memory, and the one clearly memory-driven decision made Run 2 _worse_ —
+recorded honestly as Phase 8 input, no cross-run improvement claimed); the same tool,
+E-005 and E-007 suites inside an isolated Docker container are **PENDING** on the
+developer machine (`npm run test:local`); **real Cloudflare verification is DEFERRED —
+requires Workers Paid**. There is no semantic retrieval, no model-assisted learning and no
+dashboard yet (Phases 7–13). See
 [`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md)
 and the ADRs in [`docs/adr/`](docs/adr/README.md).
 
@@ -57,8 +70,10 @@ src/
   sandbox/     ExecutionEnvironment contract
   sandbox/cloudflare/  CloudflareSandboxEnvironment, SandboxClient port, HTTP client, wire protocol (no SDK import)
   sandbox/local/       LocalLinuxEnvironment, ContainerRuntime port, container scripts, DockerCliRuntime
-  storage/     PersistentStorage contract for artifacts/objects
-  memory/      working memory (implemented), persistent record kinds, store/retrieval contracts
+  storage/     PersistentStorage contract, key grammar, archiveArtifacts, env config
+  storage/local/  FilesystemStorage — the only place node:fs is used
+  memory/      working memory, persistent record kinds, store/retrieval contracts, record validation, LexicalRetriever, env config
+  memory/sqlite/  SqliteMemoryStore — the only place node:sqlite is used
   evaluation/  Evaluator contract — separate from tool success by design
   agent/       Planner / ActionSelector / Executor / Learner contracts and implementations
   agent/runtime/  AgentRuntime loop, RunSession, RunUsageTracker, composition root
@@ -66,6 +81,8 @@ tests/         contract, behavioural and architecture-rule tests
 tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering, E-000 over the wire adapter)
 tests/models/  model layer: wire translation, adapter against a real local HTTP server, config, resilience, telemetry, redaction
 tests/tools/   standard tools over the fake environment; over REAL Linux namespaces (tools suite + E-005) — skipped where unshare is unavailable
+tests/memory/  MemoryStore contract suite (test store + SQLite), SQLite durability, LexicalRetriever, config, E-007 (two OS processes, two sandboxes)
+tests/storage/ PersistentStorage contract suite, FilesystemStorage confinement, archiveArtifacts
 tests/sandbox/ Cloudflare adapter, gateway handler and HTTP client unit tests (fake sandbox client)
 tests/integration/cloudflare/  tests that need a REAL Cloudflare sandbox; skip loudly without credentials
 tests/integration/local/       tests that need REAL Docker; skip loudly by default, fail (never skip) under npm run test:local
@@ -142,7 +159,25 @@ suite and E-005 on the real kernel through the test-only namespace runtime (real
 node, git, curl; **no isolation claimed**). To run E-006 — a real model choosing among the
 real tools in real Linux — configure a model as above and run `npm run test:model`
 (`AGENT_E006_RUNS=3` for several runs; add `AGENT_LOCAL_DOCKER=1` to use Docker instead of
-namespaces).
+namespaces). The same command runs E-007b — the model twice against one persistent SQLite
+memory, fresh sandbox each time (`AGENT_E007B_PAIRS=2` for several pairs).
+
+## Persistent memory and storage
+
+Memory records (`knowledge`, `experience`, `decision`, `lesson`) live in one SQLite file
+through Node's built-in `node:sqlite` (no dependency; Node 22.13+ prints an
+`ExperimentalWarning`); artifacts promoted out of a sandbox live under a storage directory.
+Both are configured, never defaulted:
+
+```bash
+export AGENT_MEMORY_BACKEND=sqlite
+export AGENT_MEMORY_PATH=./.agent/memory.sqlite      # or :memory:
+export AGENT_STORAGE_BACKEND=filesystem
+export AGENT_STORAGE_ROOT=./.agent/storage
+```
+
+Delete the file and the directory to forget everything. Details, contract and evidence:
+ADR-005, E-007 and E-007b in `docs/experiments.md`.
 
 ## Running against a real Cloudflare sandbox (DEFERRED — requires Workers Paid)
 
@@ -176,6 +211,11 @@ Secrets live only in the environment or Wrangler secrets; see `.env.example` and
 - `src/` never imports from `tests/`; in-memory adapters are not production code.
 - Tools touch the world only through `ExecutionEnvironment`: nothing under `src/tools/`
   imports a Node builtin, spawns a process or calls `fetch` (`tests/architecture.test.ts`).
+- `node:sqlite` appears only in the SQLite store, `node:fs` only in the filesystem storage,
+  and `src/agent/` never imports a concrete memory or storage backend or its config
+  (`tests/architecture.test.ts`).
+- A memory record id owned by one run can never be overwritten by another run
+  (`tests/support/memory-store-contract.ts`, run over every `MemoryStore`).
 - A successful tool call never implies task success (`tests/evaluation.test.ts`).
 - Every derived record carries provenance so the chain
   _retrieved memory → plan/decision → action → observation → evaluation → lesson_
