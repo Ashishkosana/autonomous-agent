@@ -1,5 +1,6 @@
 import type {
   ActionId,
+  ArtifactId,
   DecisionId,
   EvaluationId,
   EventId,
@@ -46,6 +47,7 @@ export const AGENT_EVENT_TYPES = [
   'FILE_CHANGED',
   'FILE_DELETED',
   'BROWSER_NAVIGATION',
+  'ARTIFACT_STORED',
   'FAILURE_DETECTED',
   'RETRY_STARTED',
   'STRATEGY_CHANGED',
@@ -187,6 +189,14 @@ export interface AgentEventPayloads {
   FILE_CHANGED: { readonly path: string; readonly sizeBytes?: number };
   FILE_DELETED: { readonly path: string };
   BROWSER_NAVIGATION: { readonly url: string; readonly title?: string; readonly status?: number };
+  /** A sandbox artifact was copied into persistent storage, so it outlives the sandbox. */
+  ARTIFACT_STORED: {
+    readonly artifactId: ArtifactId;
+    readonly sandboxPath: string;
+    readonly storageProvider: string;
+    readonly key: string;
+    readonly sizeBytes: number;
+  };
   FAILURE_DETECTED: {
     readonly summary: string;
     readonly source: 'tool' | 'evaluation' | 'runtime';
