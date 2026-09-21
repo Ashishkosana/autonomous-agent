@@ -11,9 +11,9 @@ relevant, change strategy because of it, and make that growth observable?
 
 ## Status
 
-**Phase 6 — real persistent structured memory: PROVEN across processes and sandboxes on
-real Linux; real-model memory influence recorded (not beneficial yet); Docker-isolated run
-pending.** The repository contains the contracts, domain models and event schema from
+**Phase 7 — semantic memory and knowledge ingestion: PROVEN with a real embedding model
+across processes and sandboxes on real Linux (E-008, E-009); Docker-isolated run pending.**
+The repository contains the contracts, domain models and event schema from
 Phase 1, the autonomous runtime (`src/agent/runtime/`) from Phase 2, the
 `CloudflareSandboxEnvironment` adapter plus gateway Worker from Phase 3,
 `LocalLinuxEnvironment` (`src/sandbox/local/`, ADR-002) from Phase 3B — the verified V1
@@ -29,7 +29,16 @@ persistent memory** (ADR-005): `SqliteMemoryStore` on Node's built-in `node:sqli
 (`src/memory/sqlite/`), `FilesystemStorage` for artifacts (`src/storage/local/`),
 `archiveArtifacts` emitting `ARTIFACT_STORED`, the `LexicalRetriever` as the production
 retriever, `UniqueIdGenerator` for every id that reaches durable storage, and
-`AGENT_MEMORY_*` / `AGENT_STORAGE_*` configuration resolved at composition roots.
+`AGENT_MEMORY_*` / `AGENT_STORAGE_*` configuration resolved at composition roots; and, new
+in Phase 7, **semantic memory and knowledge ingestion** (ADR-006): an `EmbeddingProvider`
+with an OpenAI-compatible `/embeddings` adapter over the same transport as chat
+(`AGENT_EMBEDDING_*`, no fallback to the chat endpoint), `SqliteSemanticIndex` keeping one
+vector per record in the store's own file, `IndexedMemoryStore` embedding on write without
+ever blocking persistence, `HybridRetriever` fusing metadata, keyword and cosine signals and
+naming exactly which ones matched (with per-kind inclusion so the agent's own bookkeeping
+cannot crowd out what it read from the world), and `ObservationKnowledgeIngestor` turning
+`web.fetch`/`fs.read` output into `knowledge` records with sources — the fourth memory
+category the loop now writes.
 
 Evidence status: the runtime loop is proven with fakes (E-000) and replayed through the
 real model adapter over a real local HTTP server; the **real Docker suite including E-003
@@ -48,11 +57,19 @@ records, the planner was shown the lesson and cited it, Run 1's archived report 
 back after its sandbox was destroyed; 6/6); **E-007b ran a real local model twice against
 one persistent memory** (4 runs: retrieval and presentation worked every time, the model
 never cited memory, and the one clearly memory-driven decision made Run 2 _worse_ —
-recorded honestly as Phase 8 input, no cross-run improvement claimed); the same tool,
-E-005 and E-007 suites inside an isolated Docker container are **PENDING** on the
-developer machine (`npm run test:local`); **real Cloudflare verification is DEFERRED —
-requires Workers Paid**. There is no semantic retrieval, no model-assisted learning and no
-dashboard yet (Phases 7–13). See
+recorded honestly as Phase 8 input, no cross-run improvement claimed); **a real embedding
+model finds what keywords cannot** (E-008, `nomic-embed-text` via Ollama: a paraphrase with
+zero shared terms retrieved by `semantic` alone at cosine 0.62, lexical control 0 hits, an
+unreachable endpoint degrades visibly; 7/7); **knowledge read from the world in Run 1 is
+found by meaning in Run 2** (E-009: a page fetched through the sandbox becomes a knowledge
+record, embedded by the real model into one SQLite file; page, sandbox and process are
+destroyed; a second process with a fresh sandbox and a goal sharing no words with the page
+retrieves it by `semantic`, the planner is shown it and the plan cites it — 6/6, twice; its
+first batch found and fixed a ranking defect that hid the record behind the agent's own
+bookkeeping); the same tool, E-005, E-007 and E-009 suites inside an isolated Docker
+container are **PENDING** on the developer machine (`npm run test:local`); **real
+Cloudflare verification is DEFERRED — requires Workers Paid**. There is no model-assisted
+learning, no validated-improvement metric and no dashboard yet (Phases 8–13). See
 [`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md)
 and the ADRs in [`docs/adr/`](docs/adr/README.md).
 
@@ -65,23 +82,23 @@ src/
   tools/       Tool contract, ToolRegistry, structured ToolResult, createStandardTools (registration = permission)
   tools/{filesystem,terminal,code,http,web,git}/  the nine standard tools — no node builtins, only ExecutionEnvironment
   tools/support/  shell quoting, workspace path confinement, output caps, observed commands, artifact refs
-  models/      ModelProvider contract, error kinds, secret redaction, instrumentation + resilience decorators, env config
-  models/openai-compatible/  fetch-based adapter for any OpenAI-compatible endpoint (wire translation + transport)
+  models/      ModelProvider + EmbeddingProvider contracts, error kinds, secret redaction, instrumentation + resilience decorators, env config
+  models/openai-compatible/  chat + embedding adapters for any OpenAI-compatible endpoint over one shared transport (the only fetch in the model layer)
   sandbox/     ExecutionEnvironment contract
   sandbox/cloudflare/  CloudflareSandboxEnvironment, SandboxClient port, HTTP client, wire protocol (no SDK import)
   sandbox/local/       LocalLinuxEnvironment, ContainerRuntime port, container scripts, DockerCliRuntime
   storage/     PersistentStorage contract, key grammar, archiveArtifacts, env config
   storage/local/  FilesystemStorage — the only place node:fs is used
-  memory/      working memory, persistent record kinds, store/retrieval contracts, record validation, LexicalRetriever, env config
-  memory/sqlite/  SqliteMemoryStore — the only place node:sqlite is used
+  memory/      working memory, persistent record kinds, store/retrieval contracts, record validation, LexicalRetriever, HybridRetriever, IndexedMemoryStore, searchableText, env config
+  memory/sqlite/  SqliteMemoryStore + SqliteSemanticIndex — the only places node:sqlite is used
   evaluation/  Evaluator contract — separate from tool success by design
-  agent/       Planner / ActionSelector / Executor / Learner contracts and implementations
+  agent/       Planner / ActionSelector / Executor / Learner / KnowledgeIngestor contracts and implementations
   agent/runtime/  AgentRuntime loop, RunSession, RunUsageTracker, composition root
 tests/         contract, behavioural and architecture-rule tests
 tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering, E-000 over the wire adapter)
-tests/models/  model layer: wire translation, adapter against a real local HTTP server, config, resilience, telemetry, redaction
+tests/models/  model layer: wire translation, chat + embedding adapters against a real local HTTP server, config, resilience, telemetry, redaction
 tests/tools/   standard tools over the fake environment; over REAL Linux namespaces (tools suite + E-005) — skipped where unshare is unavailable
-tests/memory/  MemoryStore contract suite (test store + SQLite), SQLite durability, LexicalRetriever, config, E-007 (two OS processes, two sandboxes)
+tests/memory/  MemoryStore contract suite (test store + SQLite), SQLite durability, Lexical/Hybrid retrievers, semantic index, config, E-007 and E-009 (two OS processes, two sandboxes)
 tests/storage/ PersistentStorage contract suite, FilesystemStorage confinement, archiveArtifacts
 tests/sandbox/ Cloudflare adapter, gateway handler and HTTP client unit tests (fake sandbox client)
 tests/integration/cloudflare/  tests that need a REAL Cloudflare sandbox; skip loudly without credentials
@@ -179,6 +196,27 @@ export AGENT_STORAGE_ROOT=./.agent/storage
 Delete the file and the directory to forget everything. Details, contract and evidence:
 ADR-005, E-007 and E-007b in `docs/experiments.md`.
 
+### Semantic retrieval (optional, needs an embedding model)
+
+Without an embedding model, retrieval is keyword-only and says so (`signalsUsed` never
+contains `semantic`). To retrieve by meaning, name an OpenAI-compatible `/embeddings`
+endpoint — a second model, configured separately from the chat model, with no fallback
+between the two:
+
+```bash
+export AGENT_EMBEDDING_PROVIDER=openai-compatible
+export AGENT_EMBEDDING_BASE_URL=http://localhost:11434/v1   # e.g. Ollama: `ollama pull nomic-embed-text`
+export AGENT_EMBEDDING_MODEL=nomic-embed-text
+export AGENT_EMBEDDING_API_KEY=<key>                        # omit for keyless local servers
+npm run test:model     # also runs E-008 (real embedding) — and `npm test` then runs E-009 on real Linux
+```
+
+Vectors live in the same SQLite file as the records, tagged with the model that produced
+them; changing the model makes old vectors invisible (not wrong) until `backfill()`.
+Verified configuration (E-008/E-009): Ollama `nomic-embed-text`, 768 dimensions, 16–90 ms
+per call on CPU; paraphrases scored 0.56–0.62 against a 0.5 floor, unrelated text 0.36.
+Details and rationale: ADR-006.
+
 ## Running against a real Cloudflare sandbox (DEFERRED — requires Workers Paid)
 
 The Sandbox SDK only runs inside a Cloudflare Worker, so the Node-side adapter talks to a
@@ -206,13 +244,13 @@ Secrets live only in the environment or Wrangler secrets; see `.env.example` and
 - `src/` has no third-party runtime dependencies outside an explicit, per-file adapter
   allowlist (currently empty) that may never name a core directory.
 - `src/` never reads `process.env` — configuration is resolved at composition roots and
-  passed in; network `fetch` is confined to the two named adapters; the model adapter never
-  retains the API key as a property.
+  passed in; network `fetch` is confined to the two named adapters (the model transport and
+  the sandbox HTTP client); no model adapter retains the API key as a property.
 - `src/` never imports from `tests/`; in-memory adapters are not production code.
 - Tools touch the world only through `ExecutionEnvironment`: nothing under `src/tools/`
   imports a Node builtin, spawns a process or calls `fetch` (`tests/architecture.test.ts`).
-- `node:sqlite` appears only in the SQLite store, `node:fs` only in the filesystem storage,
-  and `src/agent/` never imports a concrete memory or storage backend or its config
+- `node:sqlite` appears only in the two SQLite adapters, `node:fs` only in the filesystem
+  storage, and `src/agent/` never imports a concrete memory or storage backend or its config
   (`tests/architecture.test.ts`).
 - A memory record id owned by one run can never be overwritten by another run
   (`tests/support/memory-store-contract.ts`, run over every `MemoryStore`).
@@ -221,4 +259,9 @@ Secrets live only in the environment or Wrangler secrets; see `.env.example` and
   _retrieved memory → plan/decision → action → observation → evaluation → lesson_
   can be walked by identifiers (`tests/provenance.test.ts`).
 - Retrieval results state which signals were actually used; "semantic" is never claimed
-  by a keyword retriever (`tests/memory.test.ts`).
+  by a keyword retriever, and the hybrid retriever claims it only when the index answered —
+  an embedding failure is reported as `degraded`, never hidden (`tests/memory.test.ts`,
+  `tests/memory/hybrid-retriever.test.ts`).
+- Knowledge ingested from the world reaches the planner only as a capped, quoted excerpt
+  with its source; `KNOWLEDGE_INGESTED` events carry where and how much, never the content
+  (`tests/runtime/knowledge-ingestion.test.ts`).

@@ -22,12 +22,137 @@ Run #2 for a related goal and measurably change Run #2's plan or actions.
 the plan of Run #2 with its `informedBy` provenance; a diff of Run #2's behaviour versus
 a control run with memory disabled.
 
-**Status.** Partially runnable after Phase 6: E-007 executes steps 1–3 with a scripted
+**Status.** Partially runnable after Phase 7: E-007 executes steps 1–3 with a scripted
 model (retrieval and citation across processes and sandboxes proven); E-007b executed them
 with a real model (retrieval and presentation proven; the model never cited memory, and the
-one clearly memory-driven decision was harmful — see E-007b). The full experiment — a
-research goal with real knowledge ingestion and a control run — still requires Phase 7
-(semantic memory) and Phase 8 (evaluation/learning), which E-007b's findings now inform.
+one clearly memory-driven decision was harmful — see E-007b). E-009 executes steps 1–3 with
+_real knowledge ingestion_ (a page fetched through the sandbox becomes a knowledge record),
+a _real embedding model_ and a goal that shares no words with the page: Run 2 retrieves the
+page by meaning, the planner is shown it and the plan cites it — with a scripted chat model.
+What is still missing for E-001 proper: a real chat model making a _measurably different_
+decision because of retrieved knowledge, and a memory-disabled control run (Phase 8), which
+E-007b's and E-009's findings now inform.
+
+## E-009 — Knowledge read from the world in Run 1 is found by meaning in Run 2 (Phase 7, PASSED on a real Linux kernel with a real embedding model)
+
+**Hypothesis.** A page the agent reads through its sandbox in Run 1 becomes Knowledge
+memory with its source; after the page, the sandbox and the process are gone, a Run 2 goal
+phrased in entirely different words retrieves that knowledge by semantic similarity, the
+planner is shown it, and the plan cites it. A keyword-only retriever over the same store
+must miss it (control).
+
+**Design.** `tests/memory/e-009-knowledge-across-runs.test.ts` (parent) spawns
+`tests/support/e009/child.ts` twice, as E-007 does. Both children open one SQLite file
+that holds both the records (`SqliteMemoryStore`) and their vectors (`SqliteSemanticIndex`,
+`IndexedMemoryStore`) and retrieve with `HybridRetriever`; the embedding model is the real
+endpoint from `AGENT_EMBEDDING_*`. Run 1 serves a small HTML page on its own loopback
+port, and its scripted model `web.fetch`es it through the sandbox's `curl`, then writes the
+report (the page read counts as a failed task — no report yet — so the loop also revises
+once). After the run the sandbox is destroyed and the page server closed. Run 2's goal is
+_"Produce a brief report file at /workspace/report.md that ends by citing what it was based
+on"_; the page says _"Every written summary must finish by naming the material it drew on,
+under a heading called Sources …"_ — the child asserts the two share no indexable term.
+Run 2's script cites the knowledge id from Run 1's evidence file; the planner keeps the
+citation only if the record was presented. Controls in Run 2's process: `LexicalRetriever`
+with the same goal text; a probe of the page URL; a diagnostic cosine scan of every vector.
+Gated on a real Linux environment and `AGENT_EMBEDDING_*`; Docker mode is PENDING (the page
+is served on the host loopback).
+
+**Results — batch 1 (cloud VM, Linux namespaces, nomic-embed-text via Ollama, retriever
+before `kindDiversity`): plumbing PASSED, ranking FAILED the purpose.**
+
+| Fact                                                       | Run 1                                                                        | Run 2                                                                            |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Status / iterations / retries                              | completed / 2 / 1                                                            | completed / 1 / 0                                                                |
+| `web.fetch` of the served page through the sandbox         | `TOOL_COMPLETED`                                                             | —                                                                                |
+| `KNOWLEDGE_INGESTED`                                       | title "House style for written summaries", source = page URL, 215 chars, 0.5 | none (fs.write brings nothing back)                                              |
+| Knowledge vector in the shared file                        | yes (`embed_memory` ×6: 2 decisions, 2 experiences, 1 lesson, 1 knowledge)   | —                                                                                |
+| Page server / sandbox after the run                        | closed / `stopped`                                                           | page URL does not answer; fresh sandbox has no report                            |
+| Goal terms overlapping the knowledge record                | —                                                                            | **none**                                                                         |
+| Lexical control (same store, same goal)                    | —                                                                            | 5 hits, all Run 1 bookkeeping; knowledge **not found**                           |
+| Hybrid retrieval (limit 5)                                 | 0 hits (empty store)                                                         | 5 hits: lesson 1.04, experience 0.87/0.85, decision 0.84/0.79 — **no knowledge** |
+| Cosine of the goal against every vector                    | —                                                                            | lesson .667, exp .619, exp .602, dec .594, **knowledge .557**, dec .550          |
+| Planner prompt mentions knowledge title / source / excerpt | —                                                                            | false / false / false                                                            |
+| Plan `informedByMemoryRecordIds`                           | []                                                                           | [] (citation dropped: record not presented)                                      |
+
+Everything up to ranking worked: the page was fetched by the sandbox, ingested with source
+and provenance, embedded by the real model, persisted in the shared file, and was a
+semantic match for a goal that shared none of its words. It was then outranked by every one
+of Run 1's own records. Two causes, both structural: the agent's bookkeeping about writing
+the report is phrased in the goal's vocabulary (`report`, `workspace`) so it collects
+keyword credit the world's page cannot, and records _about doing_ a task embed closer to a
+goal _to do_ the task than a page _about how it should be done_ (0.55–0.67 vs 0.557). With
+one score-ordered list of 5 over 6 records, the only record from the world was the one
+dropped. The planner never saw it.
+
+**Change made (ADR-006, decision 4).** `HybridRetriever.kindDiversity` (default on): keep
+the best hit of each memory kind, in ranked order, before filling remaining slots by rank;
+re-sort by score. Reproduced deterministically first with the fake embedding
+(`tests/memory/hybrid-retriever-diversity.test.ts`: three experiences and two decisions in
+the goal's words crowd out a semantically matched knowledge record; with diversity it is the
+fifth hit). No scoring changed; the cosine scan is kept in the evidence to show that.
+
+**Results — batches 2 and 3 (same VM, same model, `kindDiversity` on): PASSED 6/6, twice.**
+
+| Fact                                                        | Run 2                                                                                                          |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Hybrid retrieval (limit 5), `signalsUsed`                   | `[metadata, keyword, semantic]`, nothing degraded                                                              |
+| Hits                                                        | lesson 1.0418, experience 0.869, experience 0.8522, decision 0.85, **knowledge 0.5569 `[metadata, semantic]`** |
+| Cosine scan                                                 | unchanged from batch 1: knowledge still 5th of 6 by similarity alone                                           |
+| Lexical control                                             | still misses the knowledge record                                                                              |
+| Planner prompt mentions knowledge title / source / excerpt  | **true / true / true**                                                                                         |
+| Plan `informedByRetrievalIds` / `informedByMemoryRecordIds` | 1 retrieval / exactly the knowledge record                                                                     |
+| Outcome                                                     | completed, 1 iteration, 0 retries, report with the Sources section on the first attempt                        |
+| Parent (third process)                                      | 1 knowledge record owned by Run 1, title and source intact, its vector present                                 |
+| Embedding calls, Run 2                                      | `embed_query` ×2 (runtime retrieval + diagnostic scan), `embed_memory` ×2, 37–50 ms each                       |
+
+**What this proves.** The Phase 7 pipeline end to end on real infrastructure: sandbox tool
+→ ingestion with source → real embedding → one durable file → different process, different
+sandbox → retrieval by meaning with no shared vocabulary → presentation → citation. And a
+retrieval-policy defect that only surfaced with real records in a real store.
+
+**What this does not prove.** That a chat model _decides_ better because the knowledge is
+there — the chat model here is scripted, as in E-007. The knowledge's cosine (0.557) clears
+the 0.5 floor by a small margin for this model; other models or wordings may not, and the
+floor is an option, not a constant.
+
+Evidence: `<tmp>/agent-sandbox-evidence/e009-knowledge-across-runs.json` (batches 1–3 kept
+locally as `e009-batch1-crowded-out.json`, `e009-batch2-diversity.json`).
+
+## E-008 — A real embedding model finds what keywords cannot (Phase 7, PASSED against a real embedding model)
+
+**Hypothesis.** Through the unchanged `EmbeddingProvider → SqliteSemanticIndex →
+HybridRetriever` path, a query that shares no indexable term with a stored record retrieves
+it, and the result says `semantic` did it; the lexical retriever over the same store misses.
+
+**Design.** `tests/integration/model/real-embedding.test.ts`, gated by
+`tests/integration/model/embedding-gate.ts` (skips without `AGENT_EMBEDDING_*`; refuses to
+pass under `AGENT_REQUIRE_REAL_EMBEDDING=1`). Four records: a lesson _"python3: command not
+found — the sandbox image ships without Python; run apt-get install -y python3 first"_, a
+report-format knowledge record, a git lesson, a weather forecast. Query: _"the interpreter
+needed to execute .py programs is unavailable in the container"_ — asserted to share no
+indexable term with the target. Controls: `LexicalRetriever`; raw cosines; a keyword-and-
+semantic agreeing query; the same populated index reopened against an unreachable endpoint.
+
+**Results (cloud VM, nomic-embed-text via Ollama `/v1/embeddings`, 768 dimensions): 7/7.**
+
+| Measurement                                       | Value                                                                                                                       |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Query terms overlapping the target                | none (`interpreter needed execute programs unavailable container`)                                                          |
+| Lexical control                                   | 0 hits                                                                                                                      |
+| Hybrid, paraphrase                                | 1 hit: the python lesson, score 0.6155, `matchedBy [metadata, semantic]`                                                    |
+| Raw cosine: paraphrase → target / → weather       | 0.6155 / 0.359 (floor 0.5)                                                                                                  |
+| Hybrid, "what format does a research report need" | report knowledge, 1.5375, `[metadata, keyword, semantic]`                                                                   |
+| Unreachable endpoint, same vectors on disk        | `signalsUsed [metadata, keyword]`, `degraded [{semantic, "fetch failed"}]`, keyword hit intact, telemetry `network` failure |
+| Instrumented calls                                | 7 (`embed_memory` ×4, `embed_query` ×3), 16–87 ms, 0 failures                                                               |
+
+**A control that was wrong first.** The first draft of the unreachable-endpoint control
+used a fresh empty index. It reported `semantic` as used with no degradation — correctly:
+an index with nothing embedded for the candidates answers "no matches" without a network
+call, which is a truthful semantic result, not a failure. The control now reopens the
+populated index with the same provider label and model and a dead base URL.
+
+Evidence: `<tmp>/agent-sandbox-evidence/model-e008-real-embedding.json`.
 
 ## E-000 — Autonomous recovery inside one run (Phase 2, passing)
 

@@ -6,18 +6,18 @@ the decisions that shaped it.
 
 ## 1. Concepts and where they live
 
-| Concept                   | Responsibility                                      | Location                | Status after Phase 6                                                                                                                  |
-| ------------------------- | --------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract; OpenAI-compatible fetch adapter (ADR-003); resilience + telemetry decorators; env config; E-004 run with a real local model |
-| **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry + nine standard tools acting only through `ExecutionEnvironment` (ADR-004); proven on real Linux                  |
-| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters                                                                                          |
-| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records; working memory; `SqliteMemoryStore` + `LexicalRetriever` (ADR-005); proven across processes and sandboxes (E-007)            |
-| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                                                                                               |
-| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                                                                                                           |
-| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred                                             |
-| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | `FilesystemStorage` + `archiveArtifacts` (ADR-005); R2 remains the production candidate                                               |
-| **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                                                                                               |
-| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 12                                                                                                                              |
+| Concept                   | Responsibility                                      | Location                | Status after Phase 7                                                                                                                |
+| ------------------------- | --------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract; OpenAI-compatible chat + embedding adapters over one transport (ADR-003/006); resilience + telemetry; E-004/E-008 real    |
+| **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry + nine standard tools acting only through `ExecutionEnvironment` (ADR-004); proven on real Linux                |
+| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters                                                                                        |
+| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | `SqliteMemoryStore` (ADR-005) + `SqliteSemanticIndex`/`HybridRetriever` (ADR-006); knowledge ingested from tools; E-007/E-008/E-009 |
+| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                                                                                             |
+| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`; rule-based `ObservationKnowledgeIngestor` beside it (what the world said ≠ what the agent did)         |
+| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred                                           |
+| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | `FilesystemStorage` + `archiveArtifacts` (ADR-005); R2 remains the production candidate                                             |
+| **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                                                                                             |
+| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 12                                                                                                                            |
 
 These are deliberately separate modules. Nothing collapses them into one `Agent` class:
 `AgentRuntime` orchestrates them through their interfaces and owns nothing else.
@@ -53,20 +53,21 @@ per _attempt_, so retries and re-asks are visible (see §2a).
 
 ### Runtime components
 
-| Component                   | File                                  | Responsibility                                                                                                      |
-| --------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `AgentRuntime`              | `src/agent/runtime/agent-runtime.ts`  | The loop above. Owns orchestration, task selection, termination, memory writes and all runtime-level events.        |
-| `RunSession`                | `src/agent/runtime/run-session.ts`    | Per-run ids, clock, goal, event factory + sink, usage tracker, working memory, run state. No orchestration.         |
-| `RunUsageTracker`           | `src/agent/runtime/run-usage.ts`      | `RunUsage` counters and `breach()` — the first `RunLimit` reached.                                                  |
-| `plan-tasks.ts`             | `src/agent/runtime/plan-tasks.ts`     | Pure helpers: next runnable task, status updates.                                                                   |
-| `createAutonomousRun`       | `src/agent/runtime/create-run.ts`     | Composition root: wires defaults around caller-supplied model, tools, environment, evaluator, store and retriever.  |
-| `ModelPlanner`              | `src/agent/planner.ts`                | Structured plan / revision requests to the model; validates output; builds `Plan` with honest `informedBy`.         |
-| `ModelActionSelector`       | `src/agent/action-selector.ts`        | Tool-action request to the model; turns the proposal into `Action` + `DecisionRecord`, or finish / give up.         |
-| `ToolExecutor`              | `src/agent/executor.ts`               | Runs one `Action` through the registry against the environment; emits tool events; returns an `Observation`.        |
-| `OutcomeLearner`            | `src/agent/learner.ts`                | Rule-based: one `ExperienceRecord` per attempt; a `LessonRecord` only from a failure → success contrast.            |
-| `InstrumentedModelProvider` | `src/models/instrumented-provider.ts` | Decorates any `ModelProvider`: assigns the `modelCallId`, reports start / completion / failure records per attempt. |
-| `ResilientModelProvider`    | `src/models/resilient-provider.ts`    | Decorates any `ModelProvider`: bounded backoff retry for transient failures, bounded re-ask for invalid answers.    |
-| `RunWorkingMemory`          | `src/memory/working.ts`               | Process-local working memory for the run.                                                                           |
+| Component                      | File                                  | Responsibility                                                                                                      |
+| ------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `AgentRuntime`                 | `src/agent/runtime/agent-runtime.ts`  | The loop above. Owns orchestration, task selection, termination, memory writes and all runtime-level events.        |
+| `RunSession`                   | `src/agent/runtime/run-session.ts`    | Per-run ids, clock, goal, event factory + sink, usage tracker, working memory, run state. No orchestration.         |
+| `RunUsageTracker`              | `src/agent/runtime/run-usage.ts`      | `RunUsage` counters and `breach()` — the first `RunLimit` reached.                                                  |
+| `plan-tasks.ts`                | `src/agent/runtime/plan-tasks.ts`     | Pure helpers: next runnable task, status updates.                                                                   |
+| `createAutonomousRun`          | `src/agent/runtime/create-run.ts`     | Composition root: wires defaults around caller-supplied model, tools, environment, evaluator, store and retriever.  |
+| `ModelPlanner`                 | `src/agent/planner.ts`                | Structured plan / revision requests to the model; validates output; builds `Plan` with honest `informedBy`.         |
+| `ModelActionSelector`          | `src/agent/action-selector.ts`        | Tool-action request to the model; turns the proposal into `Action` + `DecisionRecord`, or finish / give up.         |
+| `ToolExecutor`                 | `src/agent/executor.ts`               | Runs one `Action` through the registry against the environment; emits tool events; returns an `Observation`.        |
+| `OutcomeLearner`               | `src/agent/learner.ts`                | Rule-based: one `ExperienceRecord` per attempt; a `LessonRecord` only from a failure → success contrast.            |
+| `ObservationKnowledgeIngestor` | `src/agent/knowledge-ingestor.ts`     | Rule-based: `web.fetch`/`fs.read` output → one `KnowledgeRecord` with source + provenance; refusals say why.        |
+| `InstrumentedModelProvider`    | `src/models/instrumented-provider.ts` | Decorates any `ModelProvider`: assigns the `modelCallId`, reports start / completion / failure records per attempt. |
+| `ResilientModelProvider`       | `src/models/resilient-provider.ts`    | Decorates any `ModelProvider`: bounded backoff retry for transient failures, bounded re-ask for invalid answers.    |
+| `RunWorkingMemory`             | `src/memory/working.ts`               | Process-local working memory for the run.                                                                           |
 
 ### 2a. Intelligence layer (Phase 4)
 
@@ -165,6 +166,8 @@ Evaluator.evaluate(scope)                                ← may inspect the env
         ↓ EvaluationResult { verdict, checks[], gaps[], toolStatus, derivedFrom }
 Learner.learn(action, observation, evaluation)
         ↓ ExperienceRecord + LessonRecord[]              ← written to MemoryStore
+KnowledgeIngestor.ingest(action, observation)            ← regardless of the verdict
+        ↓ KnowledgeRecord[] (source, provenance)         ← KNOWLEDGE_INGESTED, then MEMORY_WRITTEN
 ```
 
 `ToolResult.status` and `EvaluationResult.verdict` are distinct fields on distinct records
@@ -239,7 +242,8 @@ contradicted). These are raw inputs for a future growth formula, not a growth fo
 
 Retrieval (`src/memory/retrieval.ts`) returns a small ranked set and records
 `signalsUsed` and per-hit `matchedBy` so the UI can never claim a stage that did not run.
-`SemanticIndex` is the seam where an embedding/vector implementation plugs in.
+`SemanticIndex` is the seam where an embedding/vector implementation plugs in; Phase 7
+filled it (below).
 
 **Storage (Phase 6, ADR-005).** All persistent kinds share one `MemoryStore`, backed by
 `SqliteMemoryStore` over `node:sqlite`: the full record as JSON is the source of truth and
@@ -250,11 +254,31 @@ other's records, which is why every durable id now comes from `UniqueIdGenerator
 Artifacts leave the sandbox through `archiveArtifacts` into a `PersistentStorage`
 (`FilesystemStorage` in V1), emitting `ARTIFACT_STORED`; this happens at the composition
 root, never inside the loop. `LexicalRetriever` (metadata filter through the store, then
-distinct-term overlap, deterministic ranking) is the production retriever; the semantic
-stage remains unclaimed until ADR-006. `src/agent/` cannot name any of these backends
+distinct-term overlap, deterministic ranking) is the retriever when no embedding model is
+configured; it never claims `semantic`. `src/agent/` cannot name any of these backends
 (architecture rule).
 
-**What E-007b taught about memory content (input to Phases 7–8, not yet implemented).**
+**Semantic memory and knowledge ingestion (Phase 7, ADR-006).** A second, separately
+configured model — `EmbeddingProvider` behind `AGENT_EMBEDDING_*`, OpenAI-compatible
+`/embeddings` over the same `OpenAICompatibleTransport` as chat, instrumented as
+`MODEL_CALL_*` with purposes `embed_memory`/`embed_query` — turns `searchableText(record)`
+into a float32 vector that `SqliteSemanticIndex` stores next to the record (same file,
+tagged with provider, model, dimensions and a text hash so unchanged text is never
+re-embedded and vectors from another model are never compared). `IndexedMemoryStore`
+decorates the store: persist first, embed second; an embedding failure is reported and the
+record stays durable and lexically retrievable until `backfill()`. `HybridRetriever` is the
+Phase 7 retriever: metadata decides eligibility, keyword coverage and cosine (floor 0.5) add
+up, `matchedBy` names exactly the signals that contributed, `signalsUsed` includes
+`semantic` only when the index answered, and an endpoint failure yields a visibly
+`degraded` lexical result. `kindDiversity` keeps the best hit of each memory kind before
+filling by rank — E-009 showed the agent's own bookkeeping otherwise crowds out the one
+record that came from the world. On the write side, `ObservationKnowledgeIngestor` makes
+`knowledge` the fourth category the loop actually writes: `web.fetch`/`fs.read` output
+becomes a verbatim, capped excerpt with a `SourceReference`, ingested regardless of the
+task's verdict and rendered to the planner as a quoted 400-character excerpt with its
+source. `src/agent/` still cannot name any backend or vendor (architecture rules).
+
+**What E-007b taught about memory content (input to Phase 8, not yet implemented).**
 An experience record that says only `fs.read → success` is true in the state that produced
 it and misleading in a fresh sandbox; a real model copied it and failed four times. Records
 need the preconditions under which they held, retrieval needs to weigh applicability to the
@@ -343,8 +367,6 @@ categories · semantic retrieval requirement · structured events · real-time o
 | Decision                             | Where it will plug in                                    | Planned ADR                                                                                                                      |
 | ------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Concrete free model / endpoint       | `AGENT_MODEL_*` configuration (adapter decided: ADR-003) | evidence-driven, after real-model runs                                                                                           |
-| Structured database                  | `MemoryStore`                                            | ADR-005                                                                                                                          |
-| Vector / semantic retrieval          | `SemanticIndex`, `MemoryRetriever`                       | ADR-006                                                                                                                          |
 | Browser automation implementation    | a `Tool` family + possibly environment support           | ADR-007                                                                                                                          |
 | Web search backend                   | `SearchProvider` (`src/tools/web/search-provider.ts`)    | with ADR-007 or earlier if needed                                                                                                |
 | Frontend framework                   | `ui/`                                                    | later                                                                                                                            |
@@ -363,20 +385,20 @@ throwing for untrusted input.
 
 ## 9. Phase plan
 
-| Phase | Deliverable                                                            | Status                                                                                                                                                                                                                 |
-| ----- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | Repository assessment                                                  | done                                                                                                                                                                                                                   |
-| 1     | Contracts, domain models, event schema, tests                          | done                                                                                                                                                                                                                   |
-| 2     | Minimal autonomous loop proven with tests                              | done                                                                                                                                                                                                                   |
-| 3     | Cloudflare Sandbox `ExecutionEnvironment`                              | built; real verification DEFERRED — requires Workers Paid                                                                                                                                                              |
-| 3B    | Local Docker `ExecutionEnvironment` for free development               | done; verified on real Docker (developer machine, 25/25, E-003)                                                                                                                                                        |
-| 4     | Real model intelligence behind `ModelProvider`                         | adapter + config + recovery + telemetry TESTED (fake HTTP server, E-000 over the wire); E-004 executed with a real local model (Ollama, cloud VM) — reviewed                                                           |
-| 5     | Real tool capabilities (filesystem, terminal, code, HTTP, web, git)    | done (ADR-004); PROVEN on real Linux (namespaces, cloud VM: tools 11/11, E-005 6/6, public Internet); Docker-isolated run PENDING developer machine; E-006 real model × real tools recorded; `web.search` backend OPEN |
-| 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) | done (ADR-005); PROVEN across processes and sandboxes on real Linux (E-007, namespaces, cloud VM); E-007b real-model memory evidence recorded; Docker-isolated run PENDING developer machine                           |
-| 7     | Semantic memory + knowledge ingestion                                  |                                                                                                                                                                                                                        |
-| 8     | Evaluation + real learning, validated-improvement metrics              |                                                                                                                                                                                                                        |
-| 9     | Browser + GitHub + MCP capabilities                                    |                                                                                                                                                                                                                        |
-| 10    | Observability backend (event store, live delivery, stop)               |                                                                                                                                                                                                                        |
-| 11    | Dashboard on real events                                               |                                                                                                                                                                                                                        |
-| 12    | Living Flame driven by validated learning                              |                                                                                                                                                                                                                        |
-| 13    | Full V1 end-to-end experiment (Run 1 → destroy → Run 2)                |                                                                                                                                                                                                                        |
+| Phase | Deliverable                                                            | Status                                                                                                                                                                                                                                                  |
+| ----- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Repository assessment                                                  | done                                                                                                                                                                                                                                                    |
+| 1     | Contracts, domain models, event schema, tests                          | done                                                                                                                                                                                                                                                    |
+| 2     | Minimal autonomous loop proven with tests                              | done                                                                                                                                                                                                                                                    |
+| 3     | Cloudflare Sandbox `ExecutionEnvironment`                              | built; real verification DEFERRED — requires Workers Paid                                                                                                                                                                                               |
+| 3B    | Local Docker `ExecutionEnvironment` for free development               | done; verified on real Docker (developer machine, 25/25, E-003)                                                                                                                                                                                         |
+| 4     | Real model intelligence behind `ModelProvider`                         | adapter + config + recovery + telemetry TESTED (fake HTTP server, E-000 over the wire); E-004 executed with a real local model (Ollama, cloud VM) — reviewed                                                                                            |
+| 5     | Real tool capabilities (filesystem, terminal, code, HTTP, web, git)    | done (ADR-004); PROVEN on real Linux (namespaces, cloud VM: tools 11/11, E-005 6/6, public Internet); Docker-isolated run PENDING developer machine; E-006 real model × real tools recorded; `web.search` backend OPEN                                  |
+| 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) | done (ADR-005); PROVEN across processes and sandboxes on real Linux (E-007, namespaces, cloud VM); E-007b real-model memory evidence recorded; Docker-isolated run PENDING developer machine                                                            |
+| 7     | Semantic memory + knowledge ingestion                                  | done (ADR-006); E-008 real embedding model: zero-overlap paraphrase found by `semantic` alone; E-009 PROVEN across processes and sandboxes on real Linux with a real embedding model (found and fixed retrieval crowd-out); Docker-isolated run PENDING |
+| 8     | Evaluation + real learning, validated-improvement metrics              |                                                                                                                                                                                                                                                         |
+| 9     | Browser + GitHub + MCP capabilities                                    |                                                                                                                                                                                                                                                         |
+| 10    | Observability backend (event store, live delivery, stop)               |                                                                                                                                                                                                                                                         |
+| 11    | Dashboard on real events                                               |                                                                                                                                                                                                                                                         |
+| 12    | Living Flame driven by validated learning                              |                                                                                                                                                                                                                                                         |
+| 13    | Full V1 end-to-end experiment (Run 1 → destroy → Run 2)                |                                                                                                                                                                                                                                                         |
