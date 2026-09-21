@@ -9,6 +9,10 @@
 //   AGENT_MODEL_API_KEY=<key, if the endpoint needs one> \
 //   node scripts/test-model.mjs
 //
+// The embedding suite (E-008) in the same directory is gated separately on
+// AGENT_EMBEDDING_PROVIDER / AGENT_EMBEDDING_BASE_URL / AGENT_EMBEDDING_MODEL and
+// skips when unset; set AGENT_REQUIRE_REAL_EMBEDDING=1 to make it mandatory.
+//
 // Evidence is written OUTSIDE the repository to AGENT_SANDBOX_EVIDENCE_DIR or
 // <os tmp>/agent-sandbox-evidence. It contains a safe configuration summary
 // (whether a key is configured) and never the key itself.
@@ -48,6 +52,9 @@ const result = spawnSync(process.execPath, args, {
 console.log('\n================ REAL MODEL VERIFICATION SUMMARY ================');
 console.log(
   `Endpoint: ${process.env.AGENT_MODEL_BASE_URL ?? '(unset)'}  Model: ${process.env.AGENT_MODEL_NAME ?? '(unset)'}  Key configured: ${process.env.AGENT_MODEL_API_KEY ? 'yes' : 'no'}`,
+);
+console.log(
+  `Embeddings: ${process.env.AGENT_EMBEDDING_BASE_URL ?? '(unset)'}  Model: ${process.env.AGENT_EMBEDDING_MODEL ?? '(unset)'}  Key configured: ${process.env.AGENT_EMBEDDING_API_KEY ? 'yes' : 'no'}`,
 );
 if (existsSync(reportFile)) {
   const report = JSON.parse(readFileSync(reportFile, 'utf8'));
