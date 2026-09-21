@@ -11,15 +11,19 @@ relevant, change strategy because of it, and make that growth observable?
 
 ## Status
 
-**Phase 4 — real model intelligence: adapter architecture TESTED, real-model verification
-pending.** The repository contains the contracts, domain models and event schema from
+**Phase 5 — real tool capabilities: PROVEN on real Linux, Docker-isolated run pending.**
+The repository contains the contracts, domain models and event schema from
 Phase 1, the autonomous runtime (`src/agent/runtime/`) from Phase 2, the
 `CloudflareSandboxEnvironment` adapter plus gateway Worker from Phase 3,
 `LocalLinuxEnvironment` (`src/sandbox/local/`, ADR-002) from Phase 3B — the verified V1
 execution environment — and, new in Phase 4, a vendor-neutral **OpenAI-compatible model
 adapter** (`src/models/openai-compatible/`, ADR-003) with environment-driven configuration,
 bounded retry/re-ask recovery, per-attempt `MODEL_CALL_STARTED/COMPLETED/FAILED` telemetry
-and structural credential containment.
+and structural credential containment; and, new in Phase 5, the **standard tool set**
+(`src/tools/`, ADR-004): `fs.read/write/list/delete`, `shell.run`, `code.run`
+(python/node/sh), `http.request`, `web.fetch`, `git` — every one acting only through
+`ExecutionEnvironment`, emitting `COMMAND_*`/`FILE_*` events and declaring artifacts, with
+`web.search` present as a seam awaiting a backend decision.
 
 Evidence status: the runtime loop is proven with fakes (E-000) and replayed through the
 real model adapter over a real local HTTP server; the **real Docker suite including E-003
@@ -28,8 +32,14 @@ passed on the developer's Windows 11 + WSL2 + Docker Desktop machine — 25 pass
 (Ollama `qwen2.5:3b` through the unchanged OpenAI-compatible adapter, `AGENT_MODEL_TOOL_MODE=json`:
 3/3 runs passed 4-of-4, the goal was completed autonomously with a real failure → strategy
 change → retry → lesson in 1 of 3 runs; results under review, see `docs/experiments.md`);
-**real Cloudflare verification is DEFERRED — requires Workers Paid**. There is still no
-persistence and no dashboard (Phases 5–13). See
+the **standard tools run on a real Linux kernel** (namespace runtime on the cloud VM:
+11/11 including public-Internet HTTP, and E-005 — a Python program that exits 0 yet fails
+evaluation until the loop fixes it — 6/6); **E-006 ran a real local model against the real
+nine-tool catalogue in real Linux** (evidence, including the catalogue's prompt cost, in
+`docs/experiments.md`); the same tool and E-005 suites inside an isolated Docker container
+are **PENDING** on the developer machine (`npm run test:local`); **real Cloudflare
+verification is DEFERRED — requires Workers Paid**. There is still no persistence and no
+dashboard (Phases 6–13). See
 [`docs/architecture.md`](docs/architecture.md), [`docs/experiments.md`](docs/experiments.md)
 and the ADRs in [`docs/adr/`](docs/adr/README.md).
 
@@ -39,7 +49,9 @@ and the ADRs in [`docs/adr/`](docs/adr/README.md).
 src/
   domain/      identifiers, provenance, goal, plan, action, observation, artifact, run
   events/      structured event schema, correlation fields, sink/source contracts
-  tools/       Tool contract, ToolRegistry, structured ToolResult
+  tools/       Tool contract, ToolRegistry, structured ToolResult, createStandardTools (registration = permission)
+  tools/{filesystem,terminal,code,http,web,git}/  the nine standard tools — no node builtins, only ExecutionEnvironment
+  tools/support/  shell quoting, workspace path confinement, output caps, observed commands, artifact refs
   models/      ModelProvider contract, error kinds, secret redaction, instrumentation + resilience decorators, env config
   models/openai-compatible/  fetch-based adapter for any OpenAI-compatible endpoint (wire translation + transport)
   sandbox/     ExecutionEnvironment contract
@@ -53,6 +65,7 @@ src/
 tests/         contract, behavioural and architecture-rule tests
 tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering, E-000 over the wire adapter)
 tests/models/  model layer: wire translation, adapter against a real local HTTP server, config, resilience, telemetry, redaction
+tests/tools/   standard tools over the fake environment; over REAL Linux namespaces (tools suite + E-005) — skipped where unshare is unavailable
 tests/sandbox/ Cloudflare adapter, gateway handler and HTTP client unit tests (fake sandbox client)
 tests/integration/cloudflare/  tests that need a REAL Cloudflare sandbox; skip loudly without credentials
 tests/integration/local/       tests that need REAL Docker; skip loudly by default, fail (never skip) under npm run test:local
@@ -113,7 +126,7 @@ sandbox is a separate disposable container, never your WSL distro or your host s
 ```bash
 npm install
 npm run sandbox:build     # docker build → agent-sandbox-local:0.1.0 (node 22, python3, git, curl; non-root)
-npm run test:local        # REAL Docker suite: TEST 1–9, contract, lifecycle, E-003; fails if Docker/image missing
+npm run test:local        # REAL Docker suite: TEST 1–9, contract, lifecycle, E-003, Phase 5 tools, E-005; fails if Docker/image missing
 npm run sandbox:clean     # remove any leftover sandbox containers (label agent.sandbox=1)
 ```
 
@@ -121,6 +134,15 @@ The container gets no host mounts, no Docker socket, no host environment, no
 capabilities, no root, `--cpus 2 --memory 2g --pids-limit 256`, a private bridge network
 with outbound Internet only. Details and rationale: ADR-002. Evidence is written to
 `AGENT_SANDBOX_EVIDENCE_DIR` (default `<tmp>/agent-sandbox-evidence`), never into the repo.
+Set `AGENT_TEST_INTERNET=1` to also assert that `http.request`/`web.fetch` reach the public
+Internet from inside the sandbox (example.com).
+
+Without Docker, on any Linux host with `unshare`, `npm test` already runs the Phase 5 tool
+suite and E-005 on the real kernel through the test-only namespace runtime (real python3,
+node, git, curl; **no isolation claimed**). To run E-006 — a real model choosing among the
+real tools in real Linux — configure a model as above and run `npm run test:model`
+(`AGENT_E006_RUNS=3` for several runs; add `AGENT_LOCAL_DOCKER=1` to use Docker instead of
+namespaces).
 
 ## Running against a real Cloudflare sandbox (DEFERRED — requires Workers Paid)
 
@@ -152,6 +174,8 @@ Secrets live only in the environment or Wrangler secrets; see `.env.example` and
   passed in; network `fetch` is confined to the two named adapters; the model adapter never
   retains the API key as a property.
 - `src/` never imports from `tests/`; in-memory adapters are not production code.
+- Tools touch the world only through `ExecutionEnvironment`: nothing under `src/tools/`
+  imports a Node builtin, spawns a process or calls `fetch` (`tests/architecture.test.ts`).
 - A successful tool call never implies task success (`tests/evaluation.test.ts`).
 - Every derived record carries provenance so the chain
   _retrieved memory → plan/decision → action → observation → evaluation → lesson_

@@ -64,7 +64,106 @@ run still completes; an exhausted re-ask budget and a `401` both end the run as 
 / `unrecoverable` with redacted reasons and no tool executed. This proves the runtime is
 indifferent to which `ModelProvider` implementation answers — not model competence.
 
-## E-004 — Real model drives the loop (Phase 4, EXECUTED against a real local model — under review)
+## E-005 — Real code execution: exit 0 is not success (Phase 5, PASSED on a real Linux kernel)
+
+**Hypothesis.** With the real `code.run` tool, a program that runs cleanly (exit 0, tool
+result `ok`, file written) can still fail the task, and the runtime detects this from the
+real artifact — not from the exit code — revises the plan and recovers, with every step
+observable and correlated.
+
+**Design.** `tests/support/e005-suite.ts`, instantiated over Linux namespaces
+(`tests/tools/e-005-namespace.test.ts`, part of `npm test` on Linux) and over Docker
+(`tests/integration/local/e-005-real-code.test.ts`, `npm run test:local`). Goal: _"Write a
+Python program that computes the sum of the integers 1..100 and saves the result to
+`/workspace/out/result.txt`; the file must contain 5050."_ The model is scripted (four
+turns fixed before the run); the tools, interpreter, files and evaluator are real. Turn 2
+proposes `code.run` with `sum(range(1, 100))` — an off-by-one that writes `4950` and exits 0. Turn 4 proposes the corrected `range(1, 101)`.
+
+**Result (2026-09-20, Cursor cloud VM, namespace runtime, real python3 3.12): 6/6.**
+
+- `completed`; usage `iterations 2, toolCalls 2, retries 1, strategyChanges 1`.
+- Two `COMMAND_FINISHED` events, both `exitCode 0`, commands
+  `python3 /workspace/.agent/code/act-{1,2}.py`; `COMMAND_OUTPUT` `wrote 4950` then
+  `wrote 5050`; two `TOOL_COMPLETED`, zero `TOOL_FAILED`.
+- `EVALUATION_COMPLETED` #1: `verdict failure, toolStatus ok, 1/2 checks` — the file
+  existed but did not contain `5050`; `FAILURE_DETECTED source evaluation`;
+  `STRATEGY_CHANGED`; `PLAN_UPDATED`; `RETRY_STARTED`; #2: `success, 2/2`.
+- The result file really holds `5050\n`; both program sources exist as artifacts
+  (`FILE_CREATED` with byte sizes) and are attached to their observations; every
+  `COMMAND_*`/`FILE_*` event carries the causing `actionId`.
+- Causal order asserted across 18 event positions; experiences `failure, success`; one
+  lesson whose provenance reaches the evaluations.
+
+**What this establishes.** The Phase 2 principle "tool success ≠ task success" holds with
+real execution: the tool layer reported the truth (the program ran), the evaluator judged
+the artifact, and the loop recovered without any exit-code heuristics. Docker-isolated
+reproduction is **PENDING** on the developer machine.
+
+## E-006 — Real model × real tools × real Linux (Phase 5, EXECUTED — evidence recorded)
+
+**Hypothesis.** A real model, shown the nine real tool descriptors, selects and drives real
+tools inside real Linux toward the E-005 goal; the machinery stays honest whatever the
+model does (complete telemetry, tool events correlated to actions, no success without the
+real file), and the real tool catalogue's prompt cost becomes measurable.
+
+**Design.** `tests/integration/model/real-model-tools.test.ts` via `npm run test:model`
+(`AGENT_E006_RUNS=3`). Same model setup as E-004 (Ollama `qwen2.5:3b`, CPU-only cloud VM,
+`AGENT_MODEL_TOOL_MODE=json`), unchanged adapter, `createStandardToolRegistry()` (nine
+tools, `web.search` absent — no provider), environment chosen by
+`tests/support/real-environment.ts` (Docker when available, else namespaces). Limits:
+`maxIterations 6, maxToolCalls 8, maxModelCalls 24, maxDurationMs 840 s`. Assertions:
+terminal status; ≥1 answered call; `started = completed + failed`; measured latencies;
+every `COMMAND_*`/`FILE_*` event has an `actionId`; `completed` ⇒ the real file contains
+`5050` and the last evaluation is `success`; otherwise no evaluation may be `success`.
+
+**Results (2026-09-20/21, namespace runtime; evidence `model-e006-run-{1,2,3}.json`).**
+
+Batch 1 (three runs, `qwen2.5:3b`, 13–25 s per model call on CPU):
+
+| Run | Status          | Iter | Tool calls | Model calls | Tools chosen                                                   | What really happened                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | --------------- | ---- | ---------- | ----------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `failed`        | 1    | 1          | 4           | `code.run`                                                     | Real python3 printed `5050` and exited 0 — but never wrote the file. `EVALUATION_COMPLETED: failure, toolStatus ok, 0/1`; `FAILURE_DETECTED: result.txt has not been created`. The revision then failed validation twice (re-ask exhausted) → `GOAL_FAILED`.                                                                                                                                             |
+| 2   | `failed`        | 2    | 2          | 6           | `code.run` ×2                                                  | Program 1 called `fs.write(...)` _inside Python_ (`NameError: name 'fs' is not defined`, exit 1); program 2 began with a Markdown fence (` ```python `, `SyntaxError`, exit 1). Both tool results `ok`, both evaluations `failure`. A strategy change was recorded with the placeholder reason _"The reason for the change in approach must be provided."_ Revision then invalid → `GOAL_FAILED`.        |
+| 3   | `limit_reached` | 6    | 6          | 10          | `code.run` ×2, `fs.write`, `code.run`, `shell.run`, `code.run` | Programs 1–2 crashed with `FileNotFoundError` (`/workspace/out/` did not exist; the tool's scratch path did). Attempt 3 wrote `5050` **directly with `fs.write`** — the evaluator, which only inspects the file, returned `success`, and a lesson was created. The plan still had 3 more tasks (“verify”, “save”, “run”); each was evaluated `success` by the same file check until `maxIterations 6/6`. |
+
+Measured catalogue cost (architectural observation #4 of E-004, now with real tools):
+`select_action` prompts carried **1,264–1,528 input tokens** with nine tools in `json` mode
+(vs. 165–586 for two test tools in E-004); `create_plan` 372 and `revise_plan` 836–1,225.
+Descriptors serialise to 4,352 characters. Usage was reported by the server on every call.
+
+**What this establishes.**
+
+- The whole chain is real and honest: a real model chose among the real tools, real
+  python3/sh ran inside real Linux, every `COMMAND_*`/`FILE_*` event carried the causing
+  `actionId`, `started = completed + failed` on all 20 model calls, latencies were
+  measured, and no run was declared complete without the real file. Test result: batch 1
+  was 2 passed / 1 failed on a **test-design** assertion (it required "no `success`
+  evaluation unless the goal completed", which is wrong when a task succeeds and the run
+  later hits a limit); the assertion was corrected to "no `GOAL_COMPLETED` unless
+  completed" and the batch re-run (below).
+- **Evaluation gap (Phase 8 evidence).** Run 3 satisfied the artifact check by writing the
+  answer directly instead of computing it with a program, and later tasks with different
+  descriptions were judged by the same file check. The rule evaluator verifies the
+  artifact, not the _process_ the goal asked for, and is not task-aware. This is the
+  strongest evidence so far for Phase 8's evaluator design: checks must be derived from
+  the task's `expectedEvidence` (e.g. a program artifact whose execution produced the
+  file), not one static artifact requirement per run.
+- **Model-behaviour observations (not acted on).** (i) 3B models blur the boundary between
+  tools and language — calling `fs.write` from Python, wrapping source in Markdown fences,
+  escaping newlines as literal `\n` in JSON strings — producing exit-1 programs that the
+  tools report faithfully. (ii) Programs assume parent directories exist; the tool
+  deliberately does not pre-create `out/` for them. (iii) Plan revisions still fail
+  validation often (missing `changeReason` when `strategyChanged`), and when they pass,
+  `changeReason` is sometimes a placeholder that echoes the instruction. (iv) The model
+  adds tasks such as "verify the output" that the current evaluator cannot distinguish
+  from the main task. Whether `code.run` should strip Markdown fences, whether the planner
+  should re-ask with the specific validation error, and how revisions may add tasks are
+  Phase 8 decisions to be made with this evidence — not tool-level accommodations for one
+  model.
+
+E006_BATCH2_PLACEHOLDER
+
+## E-004 — Real model drives the loop (Phase 4, EXECUTED against a real local model — reviewed)
 
 **Hypothesis.** A real language model, reached through the vendor-neutral adapter, answers
 in valid structured form often enough to plan, select tool actions and drive the E-000 goal

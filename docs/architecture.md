@@ -6,18 +6,18 @@ the decisions that shaped it.
 
 ## 1. Concepts and where they live
 
-| Concept                   | Responsibility                                      | Location                | Status after Phase 4                                                                                                                |
-| ------------------------- | --------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract; OpenAI-compatible fetch adapter (ADR-003); resilience + telemetry decorators; env config; real-model verification pending |
-| **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry; real tools in Phase 5                                                                                          |
-| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters                                                                                        |
-| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records, working memory impl, store/retrieval contracts                                                                             |
-| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                                                                                             |
-| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                                                                                                         |
-| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred                                           |
-| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                                                                                               |
-| **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                                                                                             |
-| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 12                                                                                                                            |
+| Concept                   | Responsibility                                      | Location                | Status after Phase 5                                                                                                                  |
+| ------------------------- | --------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Intelligence**          | Proposes plans, actions, judgements, lessons        | `src/models/`           | Contract; OpenAI-compatible fetch adapter (ADR-003); resilience + telemetry decorators; env config; E-004 run with a real local model |
+| **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry + nine standard tools acting only through `ExecutionEnvironment` (ADR-004); proven on real Linux                  |
+| **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters                                                                                          |
+| **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | Records, working memory impl, store/retrieval contracts                                                                               |
+| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                                                                                               |
+| **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`                                                                                                           |
+| **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred                                             |
+| **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | Contract; backend OPEN (R2 candidate)                                                                                                 |
+| **Observability**         | Structured events describing every meaningful step  | `src/events/`           | Schema + factory + sink/source contract                                                                                               |
+| **Visual growth**         | Living Flame driven by telemetry                    | `ui/` (not yet created) | Phase 12                                                                                                                              |
 
 These are deliberately separate modules. Nothing collapses them into one `Agent` class:
 `AgentRuntime` orchestrates them through their interfaces and owns nothing else.
@@ -116,6 +116,38 @@ iteration count, so the `maxIterations` limit bounds the run unconditionally.
   verdict, not `ToolResult.status`, drives task completion and failure handling.
 - The runtime **decides** whether to continue, retry or stop, and it alone writes memory.
 
+### 2b. Capability layer (Phase 5)
+
+`src/tools/` holds the real V1 tool set (ADR-004), built once per run by
+`createStandardTools({ options, families, searchProvider })`:
+
+```
+model  ──requestToolAction(ToolDescriptor[])──▶  proposal { toolName, input, rationale }
+                                                        │
+invokeTool ── parseInput (confine paths, clamp timeouts, validate URLs/args) ── invalid_input
+                                                        │ ok
+                Tool.execute(input, ToolContext) ── only context.environment ── the sandbox
+                        │                            context.emit → COMMAND_* / FILE_* events
+                        ▼
+                ToolResult { ok: output (+artifacts) | error: code }  →  Observation
+```
+
+- `fs.read / fs.write / fs.list / fs.delete` · `shell.run` · `code.run` (python | node |
+  sh) · `http.request` · `web.fetch` · `web.search` (seam only) · `git` (allowlisted local
+  subcommands, no push).
+- **No tool touches the host.** `tests/architecture.test.ts` forbids `node:` imports,
+  process spawning and `fetch` anywhere under `src/tools/`. HTTP runs as `curl` inside the
+  sandbox so the sandbox's network policy is the agent's network policy.
+- **Registration is permission.** Only the families the composition root registers exist
+  for the run; the model is never shown anything else.
+- **Exit codes are observations.** `shell.run`/`code.run`/`git` return non-zero exits and
+  timeouts as `ok` results with data; E-005 shows a program exiting 0 and still failing
+  evaluation because the evaluator read the real file.
+- Tools emit their own `COMMAND_STARTED/OUTPUT/FINISHED` and `FILE_CREATED/CHANGED/DELETED`
+  events through `ToolContext.emit`; the run session stamps them with the action's
+  correlation. File-producing tools declare `ArtifactRef`s that reach
+  `Observation.artifacts`.
+
 ## 3. Data flow for one action
 
 ```
@@ -124,9 +156,9 @@ ModelProvider.requestToolAction(ToolDescriptor[])       ← model sees schemas, 
 Runtime builds Action { actionId, planId, decisionId?, derivedFrom }
         ↓
 invokeTool(registry, name, input, ToolContext)          ← validates input, times, wraps
-        ↓ Tool.execute(input, context)                   ← touches only context.environment
-ExecutionEnvironment (sandbox)
-        ↓ ToolResult { status: ok | error, ... }         ← "the call completed" only
+        ↓ Tool.execute(input, context)                   ← touches only context.environment;
+ExecutionEnvironment (sandbox)                              emits COMMAND_*/FILE_* via context.emit
+        ↓ ToolResult { status: ok | error, artifacts? }  ← "the call completed" only
 Observation { observationId, actionId, toolResult, artifacts }
         ↓
 Evaluator.evaluate(scope)                                ← may inspect the environment
@@ -291,9 +323,10 @@ categories · semantic retrieval requirement · structured events · real-time o
 | Decision                             | Where it will plug in                                    | Planned ADR                            |
 | ------------------------------------ | -------------------------------------------------------- | -------------------------------------- |
 | Concrete free model / endpoint       | `AGENT_MODEL_*` configuration (adapter decided: ADR-003) | evidence-driven, after real-model runs |
-| Structured database                  | `MemoryStore`                                            | ADR-004                                |
-| Vector / semantic retrieval          | `SemanticIndex`, `MemoryRetriever`                       | ADR-005                                |
-| Browser automation implementation    | a `Tool` family + possibly environment support           | ADR-006                                |
+| Structured database                  | `MemoryStore`                                            | ADR-005                                |
+| Vector / semantic retrieval          | `SemanticIndex`, `MemoryRetriever`                       | ADR-006                                |
+| Browser automation implementation    | a `Tool` family + possibly environment support           | ADR-007                                |
+| Web search backend                   | `SearchProvider` (`src/tools/web/search-provider.ts`)    | with ADR-007 or earlier if needed      |
 | Frontend framework                   | `ui/`                                                    | later                                  |
 | Exact memory schemas                 | `src/memory/records.ts`                                  | later                                  |
 | Growth formula                       | consumer of telemetry + `LessonValidation`               | later                                  |
@@ -310,20 +343,20 @@ throwing for untrusted input.
 
 ## 9. Phase plan
 
-| Phase | Deliverable                                                            | Status                                                                                                                                                           |
-| ----- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | Repository assessment                                                  | done                                                                                                                                                             |
-| 1     | Contracts, domain models, event schema, tests                          | done                                                                                                                                                             |
-| 2     | Minimal autonomous loop proven with tests                              | done                                                                                                                                                             |
-| 3     | Cloudflare Sandbox `ExecutionEnvironment`                              | built; real verification DEFERRED — requires Workers Paid                                                                                                        |
-| 3B    | Local Docker `ExecutionEnvironment` for free development               | done; verified on real Docker (developer machine, 25/25, E-003)                                                                                                  |
-| 4     | Real model intelligence behind `ModelProvider`                         | adapter + config + recovery + telemetry TESTED (fake HTTP server, E-000 over the wire); E-004 executed with a real local model (Ollama, cloud VM) — under review |
-| 5     | Real tool capabilities (filesystem, terminal, code, HTTP, web, git)    |                                                                                                                                                                  |
-| 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) |                                                                                                                                                                  |
-| 7     | Semantic memory + knowledge ingestion                                  |                                                                                                                                                                  |
-| 8     | Evaluation + real learning, validated-improvement metrics              |                                                                                                                                                                  |
-| 9     | Browser + GitHub + MCP capabilities                                    |                                                                                                                                                                  |
-| 10    | Observability backend (event store, live delivery, stop)               |                                                                                                                                                                  |
-| 11    | Dashboard on real events                                               |                                                                                                                                                                  |
-| 12    | Living Flame driven by validated learning                              |                                                                                                                                                                  |
-| 13    | Full V1 end-to-end experiment (Run 1 → destroy → Run 2)                |                                                                                                                                                                  |
+| Phase | Deliverable                                                            | Status                                                                                                                                                                                                                 |
+| ----- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Repository assessment                                                  | done                                                                                                                                                                                                                   |
+| 1     | Contracts, domain models, event schema, tests                          | done                                                                                                                                                                                                                   |
+| 2     | Minimal autonomous loop proven with tests                              | done                                                                                                                                                                                                                   |
+| 3     | Cloudflare Sandbox `ExecutionEnvironment`                              | built; real verification DEFERRED — requires Workers Paid                                                                                                                                                              |
+| 3B    | Local Docker `ExecutionEnvironment` for free development               | done; verified on real Docker (developer machine, 25/25, E-003)                                                                                                                                                        |
+| 4     | Real model intelligence behind `ModelProvider`                         | adapter + config + recovery + telemetry TESTED (fake HTTP server, E-000 over the wire); E-004 executed with a real local model (Ollama, cloud VM) — reviewed                                                           |
+| 5     | Real tool capabilities (filesystem, terminal, code, HTTP, web, git)    | done (ADR-004); PROVEN on real Linux (namespaces, cloud VM: tools 11/11, E-005 6/6, public Internet); Docker-isolated run PENDING developer machine; E-006 real model × real tools recorded; `web.search` backend OPEN |
+| 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) |                                                                                                                                                                                                                        |
+| 7     | Semantic memory + knowledge ingestion                                  |                                                                                                                                                                                                                        |
+| 8     | Evaluation + real learning, validated-improvement metrics              |                                                                                                                                                                                                                        |
+| 9     | Browser + GitHub + MCP capabilities                                    |                                                                                                                                                                                                                        |
+| 10    | Observability backend (event store, live delivery, stop)               |                                                                                                                                                                                                                        |
+| 11    | Dashboard on real events                                               |                                                                                                                                                                                                                        |
+| 12    | Living Flame driven by validated learning                              |                                                                                                                                                                                                                        |
+| 13    | Full V1 end-to-end experiment (Run 1 → destroy → Run 2)                |                                                                                                                                                                                                                        |

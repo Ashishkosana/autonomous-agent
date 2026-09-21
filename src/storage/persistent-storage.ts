@@ -1,7 +1,7 @@
 /**
  * Object/file storage that survives sandbox termination. Used for artifacts,
  * reports, raw content, and exported memory. The concrete backend is chosen in
- * Phase 6 (ADR-004); a local filesystem implementation comes first, Cloudflare
+ * Phase 6 (ADR-005); a local filesystem implementation comes first, Cloudflare
  * R2 remains the natural production candidate.
  */
 
