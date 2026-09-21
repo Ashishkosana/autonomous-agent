@@ -89,7 +89,7 @@ export class AgentRuntime {
       await this.loop();
     } catch (error: unknown) {
       if (!session.isFinished()) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = describeUnrecoverable(error);
         session.emit('GOAL_FAILED', {
           reason,
           iterations: session.usage.snapshot.iterations,
@@ -478,6 +478,20 @@ export class AgentRuntime {
     if (!this.plan) throw new Error('Runtime has no plan; createInitialPlan must run first');
     return this.plan;
   }
+}
+
+/**
+ * Termination reasons must let a reader answer "why did the run stop?". Errors
+ * that carry validation messages (PlannerError, SelectorError) contribute
+ * them — they name missing or malformed fields, never model text.
+ */
+function describeUnrecoverable(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const details = (error as { errors?: unknown }).errors;
+  if (Array.isArray(details) && details.length > 0 && details.every((d) => typeof d === 'string')) {
+    return `${message}: ${details.join('; ')}`;
+  }
+  return message;
 }
 
 function decisionOutcome(evaluation: EvaluationResult): DecisionOutcome {
