@@ -28,6 +28,20 @@ export interface HybridRetrieverOptions {
   readonly keywordWeight?: number;
   /** Weight of the semantic stage's cosine similarity. Default 1. */
   readonly semanticWeight?: number;
+  /**
+   * Keep the best hit of every memory kind that has one before filling the
+   * remaining slots by score. Default true.
+   *
+   * E-009 (first batch) showed why: for a goal "write a report", the agent's
+   * own experience/decision/lesson records about writing reports are phrased
+   * in the goal's vocabulary and sit closest to it in embedding space too, so
+   * a single score-ordered list of 5 held only the agent's bookkeeping and
+   * the one record that came from the world — the ingested style page —
+   * ranked 6th of 6. The planner never saw it. The four memory categories
+   * exist because they answer different questions; a retrieval that can
+   * silently drop a whole category answers fewer of them.
+   */
+  readonly kindDiversity?: boolean;
 }
 
 /**
@@ -51,6 +65,7 @@ export class HybridRetriever implements MemoryRetriever {
   private readonly semanticThreshold: number;
   private readonly keywordWeight: number;
   private readonly semanticWeight: number;
+  private readonly kindDiversity: boolean;
 
   constructor(
     private readonly store: MemoryStore,
@@ -63,6 +78,7 @@ export class HybridRetriever implements MemoryRetriever {
     this.semanticThreshold = options.semanticThreshold ?? 0.5;
     this.keywordWeight = options.keywordWeight ?? 1;
     this.semanticWeight = options.semanticWeight ?? 1;
+    this.kindDiversity = options.kindDiversity ?? true;
   }
 
   async retrieve(query: RetrievalQuery): Promise<RetrievalResult> {
@@ -101,11 +117,12 @@ export class HybridRetriever implements MemoryRetriever {
       });
     }
     hits.sort(compareHits);
+    const limit = Math.max(0, query.limit);
 
     return {
       retrievalId: query.retrievalId,
       query,
-      hits: hits.slice(0, Math.max(0, query.limit)),
+      hits: this.kindDiversity ? selectWithKindDiversity(hits, limit) : hits.slice(0, limit),
       signalsUsed,
       ...(degraded.length > 0 ? { degraded } : {}),
       startedAt,
@@ -149,4 +166,31 @@ export class HybridRetriever implements MemoryRetriever {
       };
     }
   }
+}
+
+/**
+ * `ranked` is already in final order. First pass: the best hit of each kind,
+ * visited in ranked order, so with a limit smaller than the number of kinds
+ * the globally best hits still win. Second pass: the rest, in ranked order.
+ * The selection is then re-sorted, so the caller still sees a list ordered by
+ * score — the guarantee is about inclusion, not position.
+ */
+export function selectWithKindDiversity(
+  ranked: readonly RetrievalHit[],
+  limit: number,
+): RetrievalHit[] {
+  if (ranked.length <= limit) return [...ranked];
+  const chosen = new Set<RetrievalHit>();
+  const kindsSeen = new Set<PersistentMemoryRecord['kind']>();
+  for (const hit of ranked) {
+    if (chosen.size >= limit) break;
+    if (kindsSeen.has(hit.record.kind)) continue;
+    kindsSeen.add(hit.record.kind);
+    chosen.add(hit);
+  }
+  for (const hit of ranked) {
+    if (chosen.size >= limit) break;
+    chosen.add(hit);
+  }
+  return [...chosen].sort(compareHits);
 }
