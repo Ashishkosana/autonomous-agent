@@ -5,6 +5,7 @@ import type {
   PersistentMemoryRecord,
 } from '../../src/memory/records.js';
 import type { MemoryQuery, MemoryStore } from '../../src/memory/store.js';
+import { MemoryStoreError } from '../../src/memory/errors.js';
 import { assertStorableRecord } from '../../src/memory/validate.js';
 
 /**
@@ -17,6 +18,14 @@ export class InMemoryMemoryStore implements MemoryStore {
 
   async put(record: PersistentMemoryRecord): Promise<void> {
     assertStorableRecord(record);
+    const existing = this.records.get(record.recordId);
+    if (existing && existing.runId !== record.runId) {
+      throw new MemoryStoreError(
+        `Memory record ${record.recordId} was written by run ${existing.runId}; run ${record.runId} may not overwrite it (id collision)`,
+        'conflict',
+        record.recordId,
+      );
+    }
     // Map preserves first-insertion order, so an upsert keeps its position.
     this.records.set(record.recordId, structuredClone(record));
   }

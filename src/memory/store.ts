@@ -18,7 +18,12 @@ import type {
  * therefore means "the earliest N matches". `count` ignores `limit`.
  *
  * `put` is an upsert keyed on `recordId`: storing a record again replaces its
- * content and tags but keeps its original position in the order.
+ * content and tags but keeps its original position in the order — provided
+ * the record still carries the `runId` of the run that first wrote it. A put
+ * whose `runId` differs from the stored one is an id collision between runs
+ * and is refused with `MemoryStoreError('conflict')`; records that reach a
+ * durable store must come from a generator that is unique across processes
+ * (`UniqueIdGenerator`), which E-007 exists to check.
  */
 export interface MemoryQuery {
   readonly kinds?: readonly PersistentMemoryKind[];

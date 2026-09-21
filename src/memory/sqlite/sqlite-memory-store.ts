@@ -99,6 +99,7 @@ export class SqliteMemoryStore implements MemoryStore {
   private readonly deleteTags: StatementSync;
   private readonly insertTag: StatementSync;
   private readonly selectById: StatementSync;
+  private readonly selectOwner: StatementSync;
   private open = true;
 
   private constructor(db: DatabaseSync, path: string) {
@@ -123,6 +124,7 @@ export class SqliteMemoryStore implements MemoryStore {
     this.selectById = db.prepare(
       'SELECT record_id, kind, body FROM memory_records WHERE record_id = ?',
     );
+    this.selectOwner = db.prepare('SELECT run_id FROM memory_records WHERE record_id = ?');
   }
 
   /** Releases the file handle. Further calls fail with `unavailable`. */
@@ -142,6 +144,14 @@ export class SqliteMemoryStore implements MemoryStore {
     const body = JSON.stringify(record);
     this.db.exec('BEGIN');
     try {
+      const existing = this.selectOwner.get(record.recordId) as { run_id: string } | undefined;
+      if (existing && existing.run_id !== record.runId) {
+        throw new MemoryStoreError(
+          `Memory record ${record.recordId} was written by run ${existing.run_id}; run ${record.runId} may not overwrite it (id collision)`,
+          'conflict',
+          record.recordId,
+        );
+      }
       this.insertRecord.run(
         record.recordId,
         record.kind,
@@ -157,6 +167,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db.exec('COMMIT');
     } catch (error: unknown) {
       this.db.exec('ROLLBACK');
+      if (error instanceof MemoryStoreError) throw error;
       throw new MemoryStoreError(
         `Failed to store memory record ${record.recordId}: ${describe(error)}`,
         'unavailable',

@@ -175,6 +175,27 @@ export function describeMemoryStoreContract(
       }
     });
 
+    it('refuses to let a different run overwrite an existing record id (cross-run id collision)', async () => {
+      const h = await seeded();
+      try {
+        const collision = { ...lesson, runId: RUN_A, summary: 'from another run' };
+        const error = await h.store
+          .put(collision)
+          .then(() => undefined)
+          .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(MemoryStoreError);
+        expect((error as MemoryStoreError).kind).toBe('conflict');
+        expect((error as MemoryStoreError).recordId).toBe(lesson.recordId);
+        expect(await h.store.get(lesson.recordId)).toEqual(lesson);
+        expect(await h.store.count()).toBe(ALL_RECORDS.length);
+        // The owning run may still revise it (e.g. lesson validation counters later on).
+        await h.store.put({ ...lesson, summary: 'revised by its own run' });
+        expect((await h.store.get(lesson.recordId))?.summary).toBe('revised by its own run');
+      } finally {
+        await h.close();
+      }
+    });
+
     it('filters by kinds, run, goal, tags (all-of) and createdAfter (strict)', async () => {
       const h = await seeded();
       try {
