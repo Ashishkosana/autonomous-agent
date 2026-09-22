@@ -4,10 +4,12 @@ import type { PersistentMemoryRecord } from './records.js';
 import type {
   MemoryRetriever,
   RetrievalDegradation,
+  RetrievalDrop,
   RetrievalHit,
   RetrievalQuery,
   RetrievalResult,
   RetrievalSignal,
+  ScoreBreakdown,
   SemanticIndex,
 } from './retrieval.js';
 import { searchableText } from './searchable-text.js';
@@ -102,29 +104,44 @@ export class HybridRetriever implements MemoryRetriever {
 
     const terms = lexicalTerms(query.text, this.minTermLength);
     const hits: RetrievalHit[] = [];
+    let unmatched = 0;
     for (const record of candidates) {
       const keyword = this.keywordCoverage(terms, record);
       const cosine = semantic.scores.get(record.recordId);
       const semanticHit = cosine !== undefined && cosine >= this.semanticThreshold;
-      if (keyword <= 0 && !semanticHit) continue;
+      if (keyword <= 0 && !semanticHit) {
+        unmatched += 1;
+        continue;
+      }
       const matchedBy: RetrievalSignal[] = ['metadata'];
       if (keyword > 0) matchedBy.push('keyword');
       if (semanticHit) matchedBy.push('semantic');
-      hits.push({
-        record,
-        score: this.keywordWeight * keyword + (semanticHit ? this.semanticWeight * cosine : 0),
-        matchedBy,
-      });
+      const combined =
+        this.keywordWeight * keyword + (semanticHit ? this.semanticWeight * cosine : 0);
+      const breakdown: ScoreBreakdown = {
+        lexical: keyword,
+        semantic: cosine ?? null,
+        semanticAdmitted: semanticHit,
+        semanticThreshold: semantic.ran ? this.semanticThreshold : null,
+        lexicalWeight: this.keywordWeight,
+        semanticWeight: this.semanticWeight,
+        combined,
+      };
+      hits.push({ record, score: combined, matchedBy, breakdown });
     }
     hits.sort(compareHits);
     const limit = Math.max(0, query.limit);
+    const selected = rankHits(hits, limit, this.kindDiversity);
 
     return {
       retrievalId: query.retrievalId,
       query,
-      hits: this.kindDiversity ? selectWithKindDiversity(hits, limit) : hits.slice(0, limit),
+      hits: selected.hits,
       signalsUsed,
       ...(degraded.length > 0 ? { degraded } : {}),
+      ...(selected.dropped.length > 0 ? { dropped: selected.dropped } : {}),
+      candidateCount: candidates.length,
+      unmatchedCount: unmatched,
       startedAt,
       finishedAt: this.clock.now(),
       durationMs: this.clock.monotonicMs() - startedMs,
@@ -179,18 +196,72 @@ export function selectWithKindDiversity(
   ranked: readonly RetrievalHit[],
   limit: number,
 ): RetrievalHit[] {
-  if (ranked.length <= limit) return [...ranked];
-  const chosen = new Set<RetrievalHit>();
-  const kindsSeen = new Set<PersistentMemoryRecord['kind']>();
-  for (const hit of ranked) {
-    if (chosen.size >= limit) break;
-    if (kindsSeen.has(hit.record.kind)) continue;
-    kindsSeen.add(hit.record.kind);
-    chosen.add(hit);
+  return rankHits(ranked, limit, true).hits;
+}
+
+/**
+ * Score order is already applied to `ranked`. Kind diversity (when on) keeps
+ * the best hit of each kind before filling remaining slots, then re-sorts.
+ * Ranks and drop reasons are attached; scores are not changed.
+ */
+export function rankHits(
+  ranked: readonly RetrievalHit[],
+  limit: number,
+  diversity: boolean,
+): { hits: RetrievalHit[]; dropped: RetrievalDrop[] } {
+  const capped = Math.max(0, Math.floor(limit));
+  const rankOf = new Map<string, number>();
+  ranked.forEach((hit, index) => rankOf.set(hit.record.recordId, index + 1));
+
+  const chosen = new Set<string>();
+  if (!diversity || ranked.length <= capped) {
+    for (const hit of ranked.slice(0, capped)) chosen.add(hit.record.recordId);
+  } else {
+    const kindsSeen = new Set<PersistentMemoryRecord['kind']>();
+    for (const hit of ranked) {
+      if (chosen.size >= capped) break;
+      if (kindsSeen.has(hit.record.kind)) continue;
+      kindsSeen.add(hit.record.kind);
+      chosen.add(hit.record.recordId);
+    }
+    for (const hit of ranked) {
+      if (chosen.size >= capped) break;
+      chosen.add(hit.record.recordId);
+    }
   }
-  for (const hit of ranked) {
-    if (chosen.size >= limit) break;
-    chosen.add(hit);
+
+  const keptByDiversity = new Set<string>();
+  if (diversity && ranked.length > capped) {
+    for (const id of chosen) {
+      if ((rankOf.get(id) ?? 0) > capped) keptByDiversity.add(id);
+    }
   }
-  return [...chosen].sort(compareHits);
+
+  const hits = ranked
+    .filter((hit) => chosen.has(hit.record.recordId))
+    .sort(compareHits)
+    .map((hit, index) => ({
+      ...hit,
+      rankBeforeSelection: rankOf.get(hit.record.recordId) ?? index + 1,
+      keptByDiversity: keptByDiversity.has(hit.record.recordId),
+      finalRank: index + 1,
+    }));
+
+  const dropped: RetrievalDrop[] = ranked
+    .filter((hit) => !chosen.has(hit.record.recordId))
+    .map((hit) => {
+      const rankBeforeSelection = rankOf.get(hit.record.recordId) ?? 0;
+      const reason =
+        diversity && rankBeforeSelection <= capped ? 'displaced_by_diversity' : 'below_limit';
+      return {
+        recordId: hit.record.recordId,
+        kind: hit.record.kind,
+        score: hit.score,
+        ...(hit.breakdown ? { breakdown: hit.breakdown } : {}),
+        rankBeforeSelection,
+        reason,
+      };
+    });
+
+  return { hits, dropped };
 }

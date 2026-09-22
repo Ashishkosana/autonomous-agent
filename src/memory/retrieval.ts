@@ -1,5 +1,6 @@
 import type { IsoTimestamp, MemoryRecordId, RetrievalId } from '../domain/ids.js';
 import type { RunCorrelation } from '../domain/provenance.js';
+import type { ApplicabilityReport } from './applicability.js';
 import type { PersistentMemoryKind, PersistentMemoryRecord } from './records.js';
 
 /**
@@ -26,11 +27,50 @@ export interface RetrievalDegradation {
   readonly reason: string;
 }
 
+/**
+ * The numbers that produced `score`. Hybrid retrieval uses keyword coverage
+ * in [0, 1] and cosine in [-1, 1]. The lexical retriever's `lexical` field
+ * is an overlap count, and `semantic` is null. Absent on hand-built test hits.
+ */
+export interface ScoreBreakdown {
+  readonly lexical: number;
+  readonly semantic: number | null;
+  readonly semanticAdmitted: boolean;
+  readonly semanticThreshold: number | null;
+  readonly lexicalWeight: number;
+  readonly semanticWeight: number;
+  readonly combined: number;
+}
+
 export interface RetrievalHit {
   readonly record: PersistentMemoryRecord;
   /** Higher is more relevant; scale is retriever-specific but monotonic. */
   readonly score: number;
   readonly matchedBy: readonly RetrievalSignal[];
+  readonly breakdown?: ScoreBreakdown;
+  /** 1-based position in score order, before kind-diversity selection. */
+  readonly rankBeforeSelection?: number;
+  /** True when kind diversity kept a hit that plain top-k would have dropped. */
+  readonly keptByDiversity?: boolean;
+  /** 1-based position in the returned list, after re-sorting by score. */
+  readonly finalRank?: number;
+  /**
+   * Filled by the runtime after retrieval, from `record.preconditions`.
+   * Not part of the score.
+   */
+  readonly applicability?: ApplicabilityReport;
+}
+
+export type RetrievalDropReason = 'below_limit' | 'displaced_by_diversity';
+
+/** A scored hit that was not returned. Unscored candidates are counted, not listed. */
+export interface RetrievalDrop {
+  readonly recordId: MemoryRecordId;
+  readonly kind: PersistentMemoryKind;
+  readonly score: number;
+  readonly breakdown?: ScoreBreakdown;
+  readonly rankBeforeSelection: number;
+  readonly reason: RetrievalDropReason;
 }
 
 export interface RetrievalResult {
@@ -46,6 +86,14 @@ export interface RetrievalResult {
    * skipped. A degraded retrieval is still a valid retrieval — it just says so.
    */
   readonly degraded?: readonly RetrievalDegradation[];
+  /** Scored hits that lost the top-k or were displaced by kind diversity. */
+  readonly dropped?: readonly RetrievalDrop[];
+  /** Metadata-filtered candidates considered. */
+  readonly candidateCount?: number;
+  /** Candidates with neither a keyword hit nor an admitted semantic hit. */
+  readonly unmatchedCount?: number;
+  /** Set when retrieval was deliberately not run (memory-off arm of a comparison). */
+  readonly suppressed?: 'memory_off';
   readonly startedAt: IsoTimestamp;
   readonly finishedAt: IsoTimestamp;
   readonly durationMs: number;

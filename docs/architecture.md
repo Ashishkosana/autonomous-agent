@@ -12,7 +12,7 @@ the decisions that shaped it.
 | **Capability**            | What the agent can do to the world                  | `src/tools/`            | Contract + registry + nine standard tools acting only through `ExecutionEnvironment` (ADR-004); proven on real Linux                |
 | **Autonomy**              | The loop that keeps acting without a human          | `src/agent/runtime/`    | Implemented and tested against test adapters                                                                                        |
 | **Memory**                | What the agent knows, experienced, decided, learned | `src/memory/`           | `SqliteMemoryStore` (ADR-005) + `SqliteSemanticIndex`/`HybridRetriever` (ADR-006); knowledge ingested from tools; E-007/E-008/E-009 |
-| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract; strategy OPEN                                                                                                             |
+| **Evaluation**            | Whether a task actually progressed                  | `src/evaluation/`       | Contract plus `DeterministicEvaluator` (mechanical checks only). Model judge not implemented                                        |
 | **Learning**              | Turning evaluated outcomes into persistent lessons  | `src/agent/learner.ts`  | Rule-based `OutcomeLearner`; rule-based `ObservationKnowledgeIngestor` beside it (what the world said ≠ what the agent did)         |
 | **Execution environment** | Where actions physically run                        | `src/sandbox/`          | Contract; local Docker adapter (ADR-002); Cloudflare adapter built, verification deferred                                           |
 | **Persistent storage**    | Artifacts and objects that outlive a sandbox        | `src/storage/`          | `FilesystemStorage` + `archiveArtifacts` (ADR-005); R2 remains the production candidate                                             |
@@ -237,8 +237,24 @@ remains exactly four categories: working, knowledge, experience, decision. The
 `PersistentMemoryKind` enumeration is a storage-level discriminator and should not be
 read as the category list.
 
-Lesson records carry `LessonValidation` counters (retrieved / applied / confirmed /
-contradicted). These are raw inputs for a future growth formula, not a growth formula.
+Lesson records carry `LessonValidation` counters that are a **write-time snapshot**.
+The learner stores zeros (`UNVALIDATED`) and later runs do not overwrite another run's
+record, so the counters are not updated. Live exposure — retrieved, presented, explicitly
+cited — is counted from the event stream (`exposureFromEvents`). `timesConfirmed` and
+`timesContradicted` stay 0. Task success does not increment them, and a citation is not
+a claim that the memory caused the action.
+
+Experience and decision outcomes use the same four words as an evaluation verdict
+(`success`, `partial`, `failure`, `inconclusive`). `partial` and `inconclusive` are not
+stored as `failure`. A decision is `pending` only until it is evaluated. See
+`docs/agent-mathematics.md`.
+
+Retrieval runs **once per run, on the goal statement**. Task-level retrieval is not
+implemented: it would repeat embedding calls, and records written during the run would
+be fed back into the same run without a bound. That is a measured limitation, not an
+oversight to paper over. Preconditions on a record (for example `file_exists` for an
+`fs.read`) are checked against the current sandbox at presentation time and, when
+violated, are shown to the model as a warning. They do not change the retrieval score.
 
 Retrieval (`src/memory/retrieval.ts`) returns a small ranked set and records
 `signalsUsed` and per-hit `matchedBy` so the UI can never claim a stage that did not run.
@@ -396,7 +412,7 @@ throwing for untrusted input.
 | 5     | Real tool capabilities (filesystem, terminal, code, HTTP, web, git)    | done (ADR-004); PROVEN on real Linux (namespaces, cloud VM: tools 11/11, E-005 6/6, public Internet); Docker-isolated run PENDING developer machine; E-006 real model × real tools recorded; `web.search` backend OPEN                                  |
 | 6     | Real persistent structured memory (`MemoryStore`, `PersistentStorage`) | done (ADR-005); PROVEN across processes and sandboxes on real Linux (E-007, namespaces, cloud VM); E-007b real-model memory evidence recorded; Docker-isolated run PENDING developer machine                                                            |
 | 7     | Semantic memory + knowledge ingestion                                  | done (ADR-006); E-008 real embedding model: zero-overlap paraphrase found by `semantic` alone; E-009 PROVEN across processes and sandboxes on real Linux with a real embedding model (found and fixed retrieval crowd-out); Docker-isolated run PENDING |
-| 8     | Evaluation + real learning, validated-improvement metrics              |                                                                                                                                                                                                                                                         |
+| 8     | Evaluation + real learning, validated-improvement metrics              | deterministic evaluator, canonical outcomes, retrieval instrumentation, preconditions, and run trajectories are in (`docs/agent-mathematics.md`). Validated-improvement metrics, causal claims, and any learning update are not started.                |
 | 9     | Browser + GitHub + MCP capabilities                                    |                                                                                                                                                                                                                                                         |
 | 10    | Observability backend (event store, live delivery, stop)               |                                                                                                                                                                                                                                                         |
 | 11    | Dashboard on real events                                               |                                                                                                                                                                                                                                                         |

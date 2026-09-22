@@ -163,7 +163,14 @@ describe('selectWithKindDiversity', () => {
   });
 
   it('is the identity when the list already fits', () => {
-    expect(selectWithKindDiversity(ranked, 6)).toEqual(ranked);
-    expect(selectWithKindDiversity(ranked, 100)).toEqual(ranked);
+    for (const limit of [6, 100]) {
+      const selected = selectWithKindDiversity(ranked, limit);
+      expect(selected.map((hit) => hit.record.recordId)).toEqual(
+        ranked.map((hit) => hit.record.recordId),
+      );
+      expect(selected.map((hit) => hit.score)).toEqual(ranked.map((hit) => hit.score));
+      expect(selected.every((hit) => hit.keptByDiversity === false)).toBe(true);
+      expect(selected.map((hit) => hit.finalRank)).toEqual(ranked.map((_, index) => index + 1));
+    }
   });
 });

@@ -7,16 +7,18 @@ import {
 } from '../../domain/ids.js';
 import type { Observation } from '../../domain/observation.js';
 import type { Plan, PlanTask } from '../../domain/plan.js';
+import { verdictAsOutcome } from '../../domain/outcome.js';
+import type { RunState } from '../../domain/run.js';
 import type { EvaluationResult } from '../../evaluation/contracts.js';
 import type { Evaluator } from '../../evaluation/contracts.js';
 import type { EventCorrelation } from '../../events/contracts.js';
+import { assessPreconditions } from '../../memory/applicability.js';
 import {
   PERSISTENT_MEMORY_KINDS,
-  type DecisionOutcome,
   type DecisionRecord,
   type PersistentMemoryRecord,
 } from '../../memory/records.js';
-import type { MemoryRetriever, RetrievalResult } from '../../memory/retrieval.js';
+import type { MemoryRetriever, RetrievalHit, RetrievalResult } from '../../memory/retrieval.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { ExecutionEnvironment } from '../../sandbox/execution-environment.js';
 import type { ToolRegistry } from '../../tools/registry.js';
@@ -30,7 +32,6 @@ import type {
 } from '../contracts.js';
 import { nextTask, withRemainingTasksSkipped, withTaskStatus } from './plan-tasks.js';
 import type { RunSession } from './run-session.js';
-import type { RunState } from '../../domain/run.js';
 
 export interface RuntimeComponents {
   readonly session: RunSession;
@@ -134,9 +135,13 @@ export class AgentRuntime {
       { retrievalId, queryText: text, kinds: query.kinds },
       { retrievalId },
     );
-    const result = await retriever.retrieve(query);
+    const retrieved = await retriever.retrieve(query);
+    const result = await this.annotateApplicability(retrieved);
     session.usage.increment('memoryReads');
     const recordIds = result.hits.map((h) => h.record.recordId);
+    const violated = result.hits
+      .filter((hit) => hit.applicability?.status === 'violated')
+      .map((hit) => hit.record.recordId);
     session.emit(
       'MEMORY_RETRIEVED',
       {
@@ -147,7 +152,20 @@ export class AgentRuntime {
         durationMs: result.durationMs,
         signalsUsed: result.signalsUsed,
         degraded: result.degraded ?? [],
+        ...(result.suppressed ? { suppressed: result.suppressed } : {}),
+        hits: result.hits.map(hitTelemetry),
+        dropped: (result.dropped ?? []).slice(0, 50).map((drop) => ({
+          recordId: drop.recordId,
+          reason: drop.reason,
+          rankBeforeSelection: drop.rankBeforeSelection,
+          score: drop.score,
+        })),
       },
+      { retrievalId, memoryRecordIds: recordIds },
+    );
+    session.emit(
+      'MEMORY_PRESENTED',
+      { retrievalId, recordIds, violatedRecordIds: violated },
       { retrievalId, memoryRecordIds: recordIds },
     );
     this.retrievals.push(result);
@@ -289,7 +307,12 @@ export class AgentRuntime {
 
     session.emit(
       'TOOL_SELECTED',
-      { toolName: action.toolName, intent: action.intent, attempt: action.attempt },
+      {
+        toolName: action.toolName,
+        intent: action.intent,
+        attempt: action.attempt,
+        inputSummary: summarizeInput(action.input),
+      },
       correlation,
     );
 
@@ -429,6 +452,7 @@ export class AgentRuntime {
         version: revised.version,
         reason: revised.revisionReason ?? 'revised after failure',
         taskCount: revised.tasks.length,
+        informedByMemoryRecordIds: revised.informedBy.memoryRecordIds ?? [],
       },
       {
         planId: revised.planId,
@@ -491,6 +515,7 @@ export class AgentRuntime {
         gapCount: evaluation.gaps.length,
         summary: evaluation.summary,
         toolStatus: evaluation.toolStatus,
+        ...(evaluation.evaluatorName ? { evaluatorName: evaluation.evaluatorName } : {}),
       },
       { ...correlation, evaluationId: evaluation.evaluationId },
     );
@@ -530,6 +555,17 @@ export class AgentRuntime {
     if (!this.plan) throw new Error('Runtime has no plan; createInitialPlan must run first');
     return this.plan;
   }
+
+  private async annotateApplicability(result: RetrievalResult): Promise<RetrievalResult> {
+    const { tools, environment } = this.c;
+    const probe = {
+      fileExists: (path: string) => environment.fileExists(path),
+      toolNames: tools.describeAll().map((tool) => tool.name),
+      environmentProvider: environment.descriptor.provider,
+    };
+    const hits = await Promise.all(result.hits.map((hit) => annotateHit(hit, probe)));
+    return { ...result, hits };
+  }
 }
 
 /**
@@ -546,14 +582,51 @@ function describeUnrecoverable(error: unknown): string {
   return message;
 }
 
-function decisionOutcome(evaluation: EvaluationResult): DecisionOutcome {
-  switch (evaluation.verdict) {
-    case 'success':
-      return 'succeeded';
-    case 'inconclusive':
-      return 'inconclusive';
-    case 'failure':
-    case 'partial':
-      return 'failed';
+function decisionOutcome(evaluation: EvaluationResult): ReturnType<typeof verdictAsOutcome> {
+  return verdictAsOutcome(evaluation.verdict);
+}
+
+async function annotateHit(
+  hit: RetrievalHit,
+  probe: {
+    fileExists(path: string): Promise<boolean>;
+    toolNames: readonly string[];
+    environmentProvider: string;
+  },
+): Promise<RetrievalHit> {
+  if (!hit.record.preconditions || hit.record.preconditions.length === 0) return hit;
+  return { ...hit, applicability: await assessPreconditions(hit.record.preconditions, probe) };
+}
+
+function hitTelemetry(hit: RetrievalHit): {
+  recordId: RetrievalHit['record']['recordId'];
+  score: number;
+  lexical: number | null;
+  semantic: number | null;
+  semanticAdmitted: boolean;
+  rankBeforeSelection: number | null;
+  keptByDiversity: boolean;
+  finalRank: number | null;
+} {
+  return {
+    recordId: hit.record.recordId,
+    score: hit.score,
+    lexical: hit.breakdown?.lexical ?? null,
+    semantic: hit.breakdown?.semantic ?? null,
+    semanticAdmitted: hit.breakdown?.semanticAdmitted ?? false,
+    rankBeforeSelection: hit.rankBeforeSelection ?? null,
+    keptByDiversity: hit.keptByDiversity ?? false,
+    finalRank: hit.finalRank ?? null,
+  };
+}
+
+function summarizeInput(input: unknown): string {
+  let text: string;
+  try {
+    text = typeof input === 'string' ? input : JSON.stringify(input);
+  } catch {
+    text = '[unserializable input]';
   }
+  if (text === undefined) return '';
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text;
 }

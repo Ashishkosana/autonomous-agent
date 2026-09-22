@@ -1,8 +1,10 @@
+import type { VerifiableCriterion } from '../../domain/criteria.js';
 import type { Clock, IdGenerator } from '../../domain/ids.js';
 import type { RunLimits } from '../../domain/run.js';
 import type { Evaluator } from '../../evaluation/contracts.js';
 import type { EventSink } from '../../events/contracts.js';
 import type { MemoryRetriever } from '../../memory/retrieval.js';
+import { SuppressedRetriever } from '../../memory/suppressed-retriever.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { ModelProvider } from '../../models/contracts.js';
 import { InstrumentedModelProvider } from '../../models/instrumented-provider.js';
@@ -22,6 +24,13 @@ export interface AutonomousRunConfig extends RuntimeOptions {
   readonly goalStatement: string;
   readonly constraints?: readonly string[];
   readonly successCriteria?: readonly string[];
+  readonly verifiableCriteria?: readonly VerifiableCriterion[];
+  /**
+   * `off` installs a retriever that returns no hits and does not touch the
+   * store or the embedding model. The retrieval event is marked
+   * `suppressed: 'memory_off'`. Default `on`.
+   */
+  readonly memory?: 'on' | 'off';
   readonly limits: RunLimits;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -63,6 +72,7 @@ export function createAutonomousRun(config: AutonomousRunConfig): AutonomousRun 
     events: config.events,
     ...(config.constraints ? { constraints: config.constraints } : {}),
     ...(config.successCriteria ? { successCriteria: config.successCriteria } : {}),
+    ...(config.verifiableCriteria ? { verifiableCriteria: config.verifiableCriteria } : {}),
   });
 
   // Resilience wraps instrumentation so that every attempt — including the
@@ -90,7 +100,7 @@ export function createAutonomousRun(config: AutonomousRunConfig): AutonomousRun 
       learner: new OutcomeLearner(config.ids, config.clock),
       ingestor: config.ingestor ?? new ObservationKnowledgeIngestor(config.ids, config.clock),
       memoryStore: config.memoryStore,
-      retriever: config.retriever,
+      retriever: config.memory === 'off' ? new SuppressedRetriever(config.clock) : config.retriever,
       tools: config.tools,
       environment: config.environment,
     },

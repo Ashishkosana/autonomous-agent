@@ -10,6 +10,8 @@ import type {
   RunId,
   TaskId,
 } from '../domain/ids.js';
+import type { Precondition } from './applicability.js';
+import type { DecisionOutcome, OutcomeVerdict } from '../domain/outcome.js';
 import type { Provenance } from '../domain/provenance.js';
 
 /**
@@ -52,6 +54,12 @@ interface MemoryRecordBase<TKind extends PersistentMemoryKind> {
   readonly tags: readonly string[];
   /** What this record was derived from. */
   readonly provenance: Provenance;
+  /**
+   * Conditions that held, or were required, when this record was written.
+   * Optional so records stored before the field existed stay valid. Checked
+   * deterministically at presentation; not a learned applicability score.
+   */
+  readonly preconditions?: readonly Precondition[];
 }
 
 /** Where a piece of knowledge came from. */
@@ -67,11 +75,16 @@ export interface KnowledgeRecord extends MemoryRecordBase<'knowledge'> {
   readonly title: string;
   readonly content: string;
   readonly sources: readonly SourceReference[];
-  /** 0..1 — how much the agent trusts this content. */
+  /**
+   * Static initial confidence in [0, 1], fixed by the writer (0.5 for
+   * `web.fetch`, 0.4 for `fs.read`). Nothing reads it to rank, filter, or
+   * decide. It is not a posterior and it is not updated.
+   */
   readonly confidence: number;
 }
 
-export type ExperienceOutcome = 'success' | 'failure' | 'partial';
+/** Same four words as `EvaluationVerdict`. `inconclusive` is not stored as `failure`. */
+export type ExperienceOutcome = OutcomeVerdict;
 
 export interface ExperienceRecord extends MemoryRecordBase<'experience'> {
   readonly actionId: ActionId;
@@ -102,7 +115,7 @@ export interface EvidenceReference {
   readonly url?: string;
 }
 
-export type DecisionOutcome = 'pending' | 'succeeded' | 'failed' | 'inconclusive';
+export type { DecisionOutcome };
 
 export interface DecisionRecord extends MemoryRecordBase<'decision'> {
   readonly decisionId: DecisionId;
@@ -111,7 +124,10 @@ export interface DecisionRecord extends MemoryRecordBase<'decision'> {
   readonly selectedOptionId: string;
   readonly evidence: readonly EvidenceReference[];
   readonly reason: string;
-  /** 0..1. Absent when the deciding component did not report one; never invented. */
+  /**
+   * Optional number the model reported, in [0, 1]. Absent when it reported
+   * none; never invented. Not an updated belief and not used in retrieval.
+   */
   readonly confidence?: number;
   readonly actionId?: ActionId;
   readonly outcome: DecisionOutcome;
@@ -119,9 +135,12 @@ export interface DecisionRecord extends MemoryRecordBase<'decision'> {
 }
 
 /**
- * Lesson validation counters. These are the raw telemetry the growth formula
- * (OPEN) will eventually consume: a lesson that is retrieved, applied, and
- * confirmed by a later evaluation is worth more than one merely written.
+ * Write-time snapshot. The learner stores `UNVALIDATED` and nothing in the
+ * agent increments these fields: a later run may not overwrite a record owned
+ * by an earlier run. Live exposure (retrieved, presented, explicitly cited)
+ * is counted from the event stream by `exposureFromEvents`. `timesConfirmed`
+ * and `timesContradicted` stay 0 until a future experiment defines attribution.
+ * Task success does not increment them.
  */
 export interface LessonValidation {
   readonly timesRetrieved: number;
@@ -141,9 +160,16 @@ export interface LessonRecord extends MemoryRecordBase<'lesson'> {
   readonly lessonId: LessonId;
   /** The lesson itself, phrased so a future planner can act on it. */
   readonly statement: string;
-  /** When this lesson is expected to apply. */
+  /**
+   * Static labels (usually tool names) copied from the attempts that produced
+   * the lesson. Not a predicate and not updated. Contextual checks live on
+   * `preconditions`.
+   */
   readonly applicability: readonly string[];
-  /** 0..1 */
+  /**
+   * Static initial confidence. The rule-based learner writes 0.6 once.
+   * Nothing updates it and nothing ranks by it.
+   */
   readonly confidence: number;
   readonly validation: LessonValidation;
 }

@@ -32,6 +32,7 @@ export const AGENT_EVENT_TYPES = [
   'PLAN_UPDATED',
   'MEMORY_SEARCH_STARTED',
   'MEMORY_RETRIEVED',
+  'MEMORY_PRESENTED',
   'MEMORY_WRITTEN',
   'KNOWLEDGE_INGESTED',
   'DECISION_CREATED',
@@ -103,6 +104,8 @@ export interface AgentEventPayloads {
     readonly version: number;
     readonly reason: string;
     readonly taskCount: number;
+    /** Records the revised plan cited. Empty when it cited none. Not a causal claim. */
+    readonly informedByMemoryRecordIds?: readonly MemoryRecordId[];
   };
   MEMORY_SEARCH_STARTED: {
     readonly retrievalId: RetrievalId;
@@ -119,6 +122,34 @@ export interface AgentEventPayloads {
     readonly signalsUsed: readonly RetrievalSignal[];
     /** Stages that were configured but could not run this time (e.g. embedding endpoint down), with why. */
     readonly degraded: readonly { readonly signal: RetrievalSignal; readonly reason: string }[];
+    /** Set on the memory-off arm of a comparison. Retrieval did not run. */
+    readonly suppressed?: 'memory_off';
+    readonly hits?: readonly {
+      readonly recordId: MemoryRecordId;
+      readonly score: number;
+      readonly lexical: number | null;
+      readonly semantic: number | null;
+      readonly semanticAdmitted: boolean;
+      readonly rankBeforeSelection: number | null;
+      readonly keptByDiversity: boolean;
+      readonly finalRank: number | null;
+    }[];
+    readonly dropped?: readonly {
+      readonly recordId: MemoryRecordId;
+      readonly reason: 'below_limit' | 'displaced_by_diversity';
+      readonly rankBeforeSelection: number;
+      readonly score: number;
+    }[];
+  };
+  /**
+   * Records actually placed in the next model prompt. Citation is separate
+   * (`PLAN_CREATED.informedByMemoryRecordIds`) and is not a causal claim.
+   * `violatedRecordIds` were shown with a precondition warning.
+   */
+  MEMORY_PRESENTED: {
+    readonly retrievalId: RetrievalId;
+    readonly recordIds: readonly MemoryRecordId[];
+    readonly violatedRecordIds: readonly MemoryRecordId[];
   };
   /**
    * Content an action brought back from the world became a knowledge record.
@@ -184,7 +215,13 @@ export interface AgentEventPayloads {
     readonly retryable: boolean;
     readonly attempt: number;
   };
-  TOOL_SELECTED: { readonly toolName: string; readonly intent: string; readonly attempt: number };
+  TOOL_SELECTED: {
+    readonly toolName: string;
+    readonly intent: string;
+    readonly attempt: number;
+    /** JSON of the tool input, capped. Absent on events recorded before the field existed. */
+    readonly inputSummary?: string;
+  };
   TOOL_STARTED: { readonly toolName: string };
   TOOL_COMPLETED: {
     readonly toolName: string;
@@ -248,6 +285,7 @@ export interface AgentEventPayloads {
     readonly summary: string;
     /** Tool-level status of what was judged, so "tool ok, task failed" is visible in the stream. */
     readonly toolStatus: 'ok' | 'error' | 'none';
+    readonly evaluatorName?: string;
   };
   GOAL_COMPLETED: { readonly summary: string; readonly iterations: number };
   GOAL_FAILED: {

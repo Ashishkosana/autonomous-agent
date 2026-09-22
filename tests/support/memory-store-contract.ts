@@ -92,7 +92,7 @@ export const decision: DecisionRecord = {
   evidence: [{ description: 'knowledge record', memoryRecordId: knowledge.recordId }],
   reason: 'The file tool is the direct way to write a file',
   actionId: asActionId('act-1'),
-  outcome: 'failed',
+  outcome: 'failure',
   lessonIds: [],
 };
 

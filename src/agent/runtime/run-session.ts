@@ -1,3 +1,4 @@
+import type { VerifiableCriterion } from '../../domain/criteria.js';
 import type { Goal } from '../../domain/goal.js';
 import {
   asGoalId,
@@ -26,6 +27,7 @@ export interface RunSessionOptions {
   readonly goalStatement: string;
   readonly constraints?: readonly string[];
   readonly successCriteria?: readonly string[];
+  readonly verifiableCriteria?: readonly VerifiableCriterion[];
   readonly limits: RunLimits;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -65,6 +67,7 @@ export class RunSession {
       statement: options.goalStatement,
       constraints: options.constraints ?? [],
       successCriteria: options.successCriteria ?? [],
+      ...(options.verifiableCriteria ? { verifiableCriteria: options.verifiableCriteria } : {}),
       receivedAt: this.startedAt,
     };
     this.usage = new RunUsageTracker(options.limits, this.clock);

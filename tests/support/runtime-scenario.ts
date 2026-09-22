@@ -1,3 +1,4 @@
+import type { VerifiableCriterion } from '../../src/domain/criteria.js';
 import {
   asMemoryRecordId,
   type Clock,
@@ -152,6 +153,9 @@ export interface ScenarioOptions {
   readonly requirement?: ArtifactRequirement;
   readonly evaluator?: (ids: IdGenerator, clock: Clock) => Evaluator;
   readonly goalStatement?: string;
+  readonly successCriteria?: readonly string[];
+  readonly verifiableCriteria?: readonly VerifiableCriterion[];
+  readonly memory?: 'on' | 'off';
   /** Defaults to a fresh FakeExecutionEnvironment; integration tests pass a real one. */
   readonly environment?: ExecutionEnvironment;
   /** Defaults to a scripted provider fed by `turns`; tests of real adapters pass their own. */
@@ -200,6 +204,9 @@ export async function buildScenario(options: ScenarioOptions): Promise<Scenario>
 
   const { runtime, session } = createAutonomousRun({
     goalStatement: options.goalStatement ?? GOAL_STATEMENT,
+    ...(options.successCriteria ? { successCriteria: options.successCriteria } : {}),
+    ...(options.verifiableCriteria ? { verifiableCriteria: options.verifiableCriteria } : {}),
+    ...(options.memory ? { memory: options.memory } : {}),
     limits: { ...DEFAULT_LIMITS, ...options.limits },
     ids,
     clock,

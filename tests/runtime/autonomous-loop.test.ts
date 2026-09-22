@@ -108,7 +108,7 @@ describe('autonomous loop: tool ok → evaluation failure → strategy change �
     expect(experiences[1]?.retryOf).toBe(experiences[0]?.actionId);
     expect(experiences[1]?.changedApproach).toBe(true);
 
-    expect(decisions.map((d) => d.outcome)).toEqual(['failed', 'succeeded']);
+    expect(decisions.map((d) => d.outcome)).toEqual(['failure', 'success']);
     expect(decisions[1]?.lessonIds).toEqual(lessons.map((l) => l.lessonId));
 
     expect(lessons).toHaveLength(1);

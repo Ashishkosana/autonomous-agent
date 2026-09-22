@@ -9,6 +9,11 @@ visualisation can reflect only measured development, never a fake counter.
 The research question: can an agent accumulate experience across runs, retrieve it when
 relevant, change strategy because of it, and make that growth observable?
 
+What is implemented today is a memory-augmented agent with deterministic evaluation,
+lexical and semantic retrieval, and a reconstructable trace. It does **not** train model
+weights, optimise a loss, or statistically prove that memory improves performance.
+`docs/agent-mathematics.md` states the formulas that exist and the claims that do not.
+
 ## Status
 
 **Phase 7 — semantic memory and knowledge ingestion: PROVEN with a real embedding model

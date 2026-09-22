@@ -1,12 +1,8 @@
 import { asLessonId, asMemoryRecordId, type Clock, type IdGenerator } from '../domain/ids.js';
+import { verdictAsOutcome } from '../domain/outcome.js';
 import { mergeProvenance, type Provenance } from '../domain/provenance.js';
-import type { EvaluationVerdict } from '../evaluation/contracts.js';
-import {
-  UNVALIDATED,
-  type ExperienceOutcome,
-  type ExperienceRecord,
-  type LessonRecord,
-} from '../memory/records.js';
+import { preconditionsFromToolCall } from '../memory/applicability.js';
+import { UNVALIDATED, type ExperienceRecord, type LessonRecord } from '../memory/records.js';
 import type { Learner, LearningInput, LearningOutput, TaskAttempt } from './contracts.js';
 
 /**
@@ -47,10 +43,11 @@ export class OutcomeLearner implements Learner {
       inputSummary: attempt.action.intent,
       observationId: attempt.observation.observationId,
       evaluationId: attempt.evaluation.evaluationId,
-      outcome: toOutcome(attempt.evaluation.verdict),
+      outcome: verdictAsOutcome(attempt.evaluation.verdict),
       attempt: attempt.action.attempt,
       changedApproach: previous ? approachDiffers(previous, attempt) : false,
       ...(attempt.action.retryOf ? { retryOf: attempt.action.retryOf } : {}),
+      ...preconditionField(attempt.action.toolName, attempt.action.input),
     };
 
     const failedBefore = previousAttempts.filter((a) => a.evaluation.verdict !== 'success');
@@ -94,7 +91,7 @@ export class OutcomeLearner implements Learner {
         (value, index, all) => all.indexOf(value) === index,
       ),
       tags: ['contrast', attempt.action.toolName],
-      // One confirmation only; later runs raise this through LessonValidation.
+      // Static initial value. Not updated. See LessonValidation.
       confidence: 0.6,
       validation: UNVALIDATED,
       provenance: mergeProvenance(
@@ -126,14 +123,10 @@ function approachDiffers(previous: TaskAttempt, current: TaskAttempt): boolean {
   );
 }
 
-function toOutcome(verdict: EvaluationVerdict): ExperienceOutcome {
-  switch (verdict) {
-    case 'success':
-      return 'success';
-    case 'partial':
-      return 'partial';
-    case 'failure':
-    case 'inconclusive':
-      return 'failure';
-  }
+function preconditionField(
+  toolName: string,
+  input: unknown,
+): { preconditions: ReturnType<typeof preconditionsFromToolCall> } | Record<string, never> {
+  const preconditions = preconditionsFromToolCall(toolName, input);
+  return preconditions.length > 0 ? { preconditions } : {};
 }

@@ -5,6 +5,7 @@ import type {
   RetrievalHit,
   RetrievalQuery,
   RetrievalResult,
+  ScoreBreakdown,
 } from './retrieval.js';
 import { searchableText } from './searchable-text.js';
 import type { MemoryStore } from './store.js';
@@ -48,24 +49,59 @@ export class LexicalRetriever implements MemoryRetriever {
 
     const terms = this.tokenize(query.text);
     const hits: RetrievalHit[] = [];
+    let candidateCount = 0;
+    let unmatchedCount = 0;
     if (terms.size > 0) {
       const candidates = await this.store.query({
         kinds: query.kinds,
         ...(query.tags ? { tags: query.tags } : {}),
         limit: this.maxCandidates,
       });
+      candidateCount = candidates.length;
       for (const record of candidates) {
         const score = this.score(terms, record);
-        if (score > 0) hits.push({ record, score, matchedBy: ['metadata', 'keyword'] });
+        if (score <= 0) {
+          unmatchedCount += 1;
+          continue;
+        }
+        const breakdown: ScoreBreakdown = {
+          lexical: score,
+          semantic: null,
+          semanticAdmitted: false,
+          semanticThreshold: null,
+          lexicalWeight: 1,
+          semanticWeight: 0,
+          combined: score,
+        };
+        hits.push({ record, score, matchedBy: ['metadata', 'keyword'], breakdown });
       }
       hits.sort(compareHits);
     }
 
+    const limit = Math.max(0, query.limit);
+    const selected = hits.slice(0, limit).map((hit, index) => ({
+      ...hit,
+      rankBeforeSelection: index + 1,
+      keptByDiversity: false,
+      finalRank: index + 1,
+    }));
+    const dropped = hits.slice(limit).map((hit, index) => ({
+      recordId: hit.record.recordId,
+      kind: hit.record.kind,
+      score: hit.score,
+      ...(hit.breakdown ? { breakdown: hit.breakdown } : {}),
+      rankBeforeSelection: limit + index + 1,
+      reason: 'below_limit' as const,
+    }));
+
     return {
       retrievalId: query.retrievalId,
       query,
-      hits: hits.slice(0, Math.max(0, query.limit)),
+      hits: selected,
       signalsUsed: ['metadata', 'keyword'],
+      ...(dropped.length > 0 ? { dropped } : {}),
+      candidateCount,
+      unmatchedCount,
       startedAt,
       finishedAt: this.clock.now(),
       durationMs: this.clock.monotonicMs() - startedMs,
