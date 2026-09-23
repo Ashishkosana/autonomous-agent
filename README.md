@@ -1,10 +1,13 @@
-# Observable Autonomous Learning Agent
+# Autonomous agent
 
-An experimental autonomous agent that receives one high-level goal, plans and acts on
-its own inside an isolated Linux sandbox, evaluates its own results, extracts lessons,
-persists them, and retrieves them in later runs. Everything it does is emitted as
-structured telemetry so a human can watch it work — and so the "Living Flame"
-visualisation can reflect only measured development, never a fake counter.
+A measurable memory-augmented autonomous agent with deterministic evaluation and observability.
+
+It receives one high-level goal, plans and acts inside an isolated Linux sandbox, checks
+the result against mechanical criteria, records what happened, and can retrieve those
+records on a later run. Everything it does is emitted as structured telemetry so a human
+can watch it work — and so a later Living Flame view can reflect measured runtime state,
+never a fake score. Foundation-model weights stay external and fixed. Memory can change
+what a later run is shown; that is not training, and it is not proof that memory helped.
 
 The research question: can an agent accumulate experience across runs, retrieve it when
 relevant, change strategy because of it, and make that growth observable?
@@ -83,7 +86,7 @@ and the ADRs in [`docs/adr/`](docs/adr/README.md).
 ```
 src/
   domain/      identifiers, provenance, goal, plan, action, observation, artifact, run
-  events/      structured event schema, correlation fields, sink/source contracts
+  events/      structured event schema, correlation fields, sink/source contracts, SubscribableEventSink
   tools/       Tool contract, ToolRegistry, structured ToolResult, createStandardTools (registration = permission)
   tools/{filesystem,terminal,code,http,web,git}/  the nine standard tools — no node builtins, only ExecutionEnvironment
   tools/support/  shell quoting, workspace path confinement, output caps, observed commands, artifact refs
@@ -98,7 +101,9 @@ src/
   memory/sqlite/  SqliteMemoryStore + SqliteSemanticIndex — the only places node:sqlite is used
   evaluation/  Evaluator contract — separate from tool success by design
   agent/       Planner / ActionSelector / Executor / Learner / KnowledgeIngestor contracts and implementations
-  agent/runtime/  AgentRuntime loop, RunSession, RunUsageTracker, composition root
+  agent/runtime/  AgentRuntime loop, RunSession, RunUsageTracker, composition root (`createAutonomousRun`)
+  cli/         argument parsing, startup banner, and event rendering for `npm run agent`
+  composition/ local Docker run: one `AgentRuntime`, SQLite memory, standard tools, deterministic evaluator
 tests/         contract, behavioural and architecture-rule tests
 tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering, E-000 over the wire adapter)
 tests/models/  model layer: wire translation, chat + embedding adapters against a real local HTTP server, config, resilience, telemetry, redaction
@@ -126,7 +131,49 @@ npm run check        # format check + type check (src + worker) + tests
 npm test             # tests only; Cloudflare integration tests are skipped without credentials
 npm run typecheck    # strict TypeScript, no emit
 npm run format       # prettier --write
+npm run agent -- --help
 ```
+
+## Command line
+
+`npm run agent` is an adapter over the same runtime the tests use. It does not contain
+a second planner, loop, or memory store.
+
+```bash
+npm run agent -- --help
+npm run agent -- \
+  "Create /workspace/hello.txt containing exactly AGENT_ALIVE" \
+  --require-file /workspace/hello.txt \
+  --require-marker AGENT_ALIVE
+```
+
+1. **Configuration.** Copy `.env.example` to `.env` (git-ignored) or export the same
+   variables. `npm run agent` loads `.env` when the file exists and does not override
+   variables already set in the shell. `AGENT_MODEL_API_KEY` is never printed.
+   `AGENT_MODEL_PROVIDER`, `AGENT_MODEL_BASE_URL`, and `AGENT_MODEL_NAME` are required.
+   `AGENT_EMBEDDING_*` is optional; unset means retrieval is lexical only.
+2. **Deterministic criteria.** The model cannot declare success. Pass
+   `--require-file` and, when the bytes matter, `--require-marker` on that file, or
+   `--criterion` with the grammar in `src/domain/criteria.ts` (`file_exists`,
+   `file_contains`, `json_file`, `command_exits_zero`, `http_status`, `tool_succeeded`).
+   A goal with no mechanical criterion is allowed to run; the evaluator then reports
+   **inconclusive**, not success.
+3. **Memory.** Records are stored in `./.agent/memory.sqlite` unless `AGENT_MEMORY_PATH`
+   is set. That directory is git-ignored. The file survives the process, so a later run
+   can retrieve earlier records. `--memory off` suppresses retrieval (no store read, no
+   query embedding) and still writes this run's records.
+4. **Docker.** The run uses the pinned local Linux image and does not fall back to the
+   host. Build it with `npm run sandbox:build`. The container is destroyed on success,
+   failure, and Ctrl+C. `/workspace` is inside that container; files there are not
+   copied onto the host. The evaluator reads them before the container is removed.
+5. **Limits.** One CLI run stops after 12 iterations, 16 tool calls, 40 model calls,
+   500000 tokens, or 20 minutes, whichever comes first.
+6. **What this is not.** Interactive prompting is not implemented. The graphical
+   Living Flame is not implemented; it would subscribe to the same event sink. This
+   system does not train, fine-tune, or update model weights.
+
+`npm run test:model` and `npm run test:local` are unchanged. They do not load `.env`
+unless you export the variables yourself.
 
 ## Running against a real model (any OpenAI-compatible endpoint)
 

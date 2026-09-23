@@ -2,7 +2,7 @@
   "name": "autonomous-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Observable autonomous learning agent \u2014 V1 architecture skeleton",
+  "description": "A measurable memory-augmented autonomous agent with deterministic evaluation and observability.",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -23,7 +23,8 @@
     "worker:tail": "wrangler tail -c worker/wrangler.jsonc",
     "sandbox:build": "node scripts/sandbox-image.mjs build",
     "sandbox:clean": "node scripts/sandbox-image.mjs clean",
-    "sandbox:remove": "node scripts/sandbox-image.mjs remove"
+    "sandbox:remove": "node scripts/sandbox-image.mjs remove",
+    "agent": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./scripts/register-ts.mjs scripts/agent.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260920.1",
