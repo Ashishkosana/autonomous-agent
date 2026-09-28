@@ -200,7 +200,7 @@ describe('OpenAICompatibleProvider — tool actions', () => {
       body: completion({
         toolCalls: [
           {
-            name: 'fs__write',
+            name: 'fs_write',
             arguments: {
               input: { path: '/workspace/r.md', content: 'x' },
               rationale: 'write it',
@@ -227,7 +227,7 @@ describe('OpenAICompatibleProvider — tool actions', () => {
     };
     expect(body.tool_choice).toBe('required');
     expect(body.tools.map((t) => t.function.name)).toEqual([
-      'fs__write',
+      'fs_write',
       'echo',
       'finish',
       'give_up',

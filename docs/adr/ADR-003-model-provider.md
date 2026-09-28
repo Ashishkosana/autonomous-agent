@@ -51,7 +51,9 @@ Constraints from the project owner:
    `ToolDescriptor` becomes a function whose parameters wrap the tool's own schema under
    `input` alongside `rationale` / `confidence` / `alternatives`, plus `finish` and
    `give_up` pseudo-functions, with `tool_choice: required`. Names are mangled to the wire
-   alphabet bijectively (`fs.write` → `fs__write`) and translated back. `json` mode asks
+   alphabet bijectively (`fs.write` → `fs_write`, `web.fetch` → `web_fetch`) and translated back.
+   A double underscore is not used: Groq's gpt-oss models rewrite `web__fetch` into `web.__fetch`
+   and reject that name because it is not in `request.tools`. `json` mode asks
    for a JSON proposal instead, for servers without function calling. A text answer
    containing a JSON proposal is accepted in either mode.
 6. **Recovery is layered and bounded.** `ResilientModelProvider` wraps any provider:

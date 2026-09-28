@@ -58,7 +58,7 @@ Groq through its OpenAI-compatible API is the portfolio configuration. The code 
 ```bash
 AGENT_MODEL_PROVIDER=openai-compatible
 AGENT_MODEL_BASE_URL=https://api.groq.com/openai/v1
-AGENT_MODEL_NAME=llama-3.3-70b-versatile
+AGENT_MODEL_NAME=openai/gpt-oss-120b
 AGENT_MODEL_API_KEY=...
 AGENT_MODEL_LABEL=groq
 AGENT_MEMORY_BACKEND=neon
@@ -276,7 +276,7 @@ unless you export the variables yourself.
 ## Running against a real model (any OpenAI-compatible endpoint)
 
 The runtime never names a vendor; you name an endpoint. The portfolio default is Groq
-(`https://api.groq.com/openai/v1`, `llama-3.3-70b-versatile`, `AGENT_MODEL_LABEL=groq`).
+(`https://api.groq.com/openai/v1`, `openai/gpt-oss-120b`, `AGENT_MODEL_LABEL=groq`).
 Any other OpenAI-compatible server works the same way — OpenRouter, Google AI Studio's
 OpenAI-compatible endpoint, or a local server (Ollama, LM Studio — no key). Set the
 variables in your shell (or a git-ignored `.env`; see `.env.example`), then:

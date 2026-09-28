@@ -26,7 +26,7 @@ Set these in the host, not in the repository:
 
 - `AGENT_MODEL_PROVIDER=openai-compatible`
 - `AGENT_MODEL_BASE_URL=https://api.groq.com/openai/v1`
-- `AGENT_MODEL_NAME=llama-3.3-70b-versatile`
+- `AGENT_MODEL_NAME=openai/gpt-oss-120b`
 - `AGENT_MODEL_LABEL=groq`
 - `AGENT_MODEL_API_KEY`
 - `AGENT_EMBEDDING_*` (optional; unset means lexical retrieval)

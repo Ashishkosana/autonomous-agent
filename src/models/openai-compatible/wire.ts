@@ -150,12 +150,42 @@ function appendInstruction(messages: readonly WireMessage[], instruction: string
 export const FINISH_TOOL = 'finish';
 export const GIVE_UP_TOOL = 'give_up';
 
-const WIRE_NAME_PATTERN = /[^A-Za-z0-9_-]/g;
+const WIRE_NAME_ALLOWED = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * OpenAI and Groq function names must match `^[A-Za-z0-9_-]{1,64}$`.
+ * Our tool names use a dot (`web.fetch`). Replacing that dot with `__`
+ * makes Groq's gpt-oss models emit `web.__fetch`, which is not in
+ * `request.tools`, so select_action fails with HTTP 400 before this
+ * client ever sees the call. One underscore stays one identifier:
+ * `web.fetch` → `web_fetch`.
+ *
+ * A name that is already legal is returned unchanged, so a deliberate
+ * `fs__write` is not collapsed into `fs_write`. A name that needed
+ * sanitizing never contains `__`: a run of disallowed characters, and any
+ * underscores touching that run, become a single `_`.
+ */
+export function toWireToolName(name: string): string {
+  if (WIRE_NAME_ALLOWED.test(name)) return name;
+  let out = '';
+  let pendingUnderscore = false;
+  for (const char of name) {
+    if (/[A-Za-z0-9-]/.test(char)) {
+      if (pendingUnderscore && out.length > 0) out += '_';
+      pendingUnderscore = false;
+      out += char;
+    } else {
+      pendingUnderscore = true;
+    }
+  }
+  return out;
+}
 
 /**
  * Function names on the wire are restricted to `[A-Za-z0-9_-]`; our tool
  * names use dots (`fs.write`). The map is bijective within one request and
- * is used to translate the model's choice back.
+ * is used to translate the model's choice back. It does not accept a name
+ * the model invented, including the rejected form `web.__fetch`.
  */
 export class ToolNameMap {
   private readonly toWire = new Map<string, string>();
@@ -163,10 +193,20 @@ export class ToolNameMap {
 
   constructor(names: readonly string[]) {
     for (const name of names) {
-      let wire = name.replace(WIRE_NAME_PATTERN, '__');
-      let suffix = 1;
-      while (this.fromWire.has(wire))
-        wire = `${name.replace(WIRE_NAME_PATTERN, '__')}_${(suffix += 1)}`;
+      const base = toWireToolName(name);
+      if (!WIRE_NAME_ALLOWED.test(base)) {
+        throw new Error(`tool name ${name} cannot be sent as a function name`);
+      }
+      let wire = base;
+      let suffix = 2;
+      while (this.fromWire.has(wire)) {
+        const candidate = `${base}_${suffix}`;
+        suffix += 1;
+        if (!WIRE_NAME_ALLOWED.test(candidate)) {
+          throw new Error(`tool name ${name} cannot be sent as a function name`);
+        }
+        wire = candidate;
+      }
       this.toWire.set(name, wire);
       this.fromWire.set(wire, name);
     }
