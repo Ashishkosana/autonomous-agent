@@ -15,6 +15,8 @@ export interface RunMetricsRecord {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly totalTokens: number;
+  /** Wall-clock time from run start to finish, in milliseconds. */
+  readonly durationMs: number;
   /**
    * Fraction of retrievals that returned at least one record.
    * `null` when retrieval did not run (memory off, or no retrieval event).

@@ -42,6 +42,7 @@ loop:
             learn + write memory        → MEMORY_WRITTEN (decision, experience), [LESSON_CREATED, MEMORY_WRITTEN]
             success → mark task complete
             failure                     → FAILURE_DETECTED
+                retrieve memory again   → MEMORY_RETRIEVED (goal + failure text)
                 planner revises         → [STRATEGY_CHANGED], PLAN_UPDATED
                 (next iteration retries the same task under the revised plan)
 unrecoverable error anywhere            → GOAL_FAILED cause=unrecoverable (status failed)

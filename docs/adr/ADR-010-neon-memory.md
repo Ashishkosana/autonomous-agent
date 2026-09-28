@@ -53,6 +53,10 @@ with neither uses `/tmp/agent-memory/memory.sqlite` and says so on the page.
 `deleteAll()` truncates the agent tables. Tests and operators must point it
 at a dedicated database.
 
+Schema version 2 adds `agent_run_metrics.duration_ms` (wall-clock milliseconds).
+A database already on version 1 gains that column, default 0, the next time
+this build opens it. Version 1 is not edited.
+
 ## Reason
 
 The runtime, retriever, and ingestor do not change. A later run on a new

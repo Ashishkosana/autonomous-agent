@@ -28,8 +28,9 @@ Environment
 
   AGENT_MODEL_PROVIDER=openai-compatible
   AGENT_MODEL_BASE_URL=https://api.groq.com/openai/v1
-  AGENT_MODEL_NAME=openai/gpt-oss-120b
+  AGENT_MODEL_NAME=llama-3.3-70b-versatile
   AGENT_MODEL_API_KEY=...
+  AGENT_MODEL_LABEL=groq
 
   AGENT_EMBEDDING_* is optional. Unset means retrieval is lexical only.
   AGENT_MEMORY_PATH overrides the memory file (default ./.agent/memory.sqlite).
@@ -54,6 +55,11 @@ Memory
   does not read the store and does not embed the goal. Write-time indexing
   still embeds new records when an embedding endpoint is configured.
   Learning here means those records, not a change to model weights.
+
+Compare two runs
+  npm run compare -- "the same goal text"
+  Prints iterations, tool calls, tokens, and duration for the two latest
+  stored runs of that goal. It does not call the model.
 
 Success criteria
   The evaluator does not trust the model. A goal with no mechanical criterion

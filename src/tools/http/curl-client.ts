@@ -50,7 +50,26 @@ export function validateUrl(raw: string): ParseResult<string> {
   if (url.username !== '' || url.password !== '') {
     return parseFail('url must not embed credentials');
   }
+  const blocked = blockedFetchHost(url.hostname);
+  if (blocked) return parseFail(blocked);
   return parseOk(url.toString());
+}
+
+/**
+ * Public http(s) fetches stay on the public internet. Loopback stays allowed
+ * so a local page (and the tests that serve one) still work. Link-local and
+ * cloud metadata addresses do not.
+ */
+export function blockedFetchHost(hostname: string): string | undefined {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'metadata.google.internal' || host.endsWith('.metadata.google.internal')) {
+    return 'cloud metadata hosts are not fetched';
+  }
+  const v4 = host.startsWith('::ffff:') ? host.slice('::ffff:'.length) : host;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(v4)) {
+    return 'link-local addresses are not fetched';
+  }
+  return undefined;
 }
 
 export function validateHeaders(

@@ -28,6 +28,8 @@ describe('URL and header validation', () => {
       value: 'https://example.test/a%20b',
     });
     expect(validateUrl('http://127.0.0.1:8080/').ok).toBe(true);
+    expect(validateUrl('http://169.254.169.254/latest/meta-data/').ok).toBe(false);
+    expect(validateUrl('http://metadata.google.internal/').ok).toBe(false);
     for (const bad of [
       'ftp://x/',
       'file:///etc/passwd',

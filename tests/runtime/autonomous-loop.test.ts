@@ -53,7 +53,7 @@ describe('autonomous loop: tool ok → evaluation failure → strategy change �
     expect(outcome.state.usage.retries).toBe(1);
     expect(outcome.state.usage.strategyChanges).toBe(1);
     expect(outcome.state.usage.modelCalls).toBe(4);
-    expect(outcome.state.usage.memoryReads).toBe(1);
+    expect(outcome.state.usage.memoryReads).toBe(2);
     expect(outcome.state.usage.memoryWrites).toBe(5);
   });
 
@@ -71,6 +71,15 @@ describe('autonomous loop: tool ok → evaluation failure → strategy change �
     expect(failure).toHaveLength(1);
     expect(failure[0]?.payload.source).toBe('evaluation');
     expect(failure[0]?.payload.summary).toContain(REQUIRED_MARKER);
+    const searches = scenario.events.ofType('MEMORY_SEARCH_STARTED');
+    expect(searches).toHaveLength(2);
+    expect(searches[1]?.payload.queryText).toContain(REQUIRED_MARKER);
+    expect(seqOf(scenario.events, 'FAILURE_DETECTED')).toBeLessThan(
+      seqOf(scenario.events, 'MEMORY_RETRIEVED', 1),
+    );
+    expect(seqOf(scenario.events, 'MEMORY_RETRIEVED', 1)).toBeLessThan(
+      seqOf(scenario.events, 'PLAN_UPDATED'),
+    );
 
     const strategy = scenario.events.ofType('STRATEGY_CHANGED');
     expect(strategy).toHaveLength(1);
@@ -201,9 +210,12 @@ describe('autonomous loop: tool ok → evaluation failure → strategy change �
     const planId = planCreated?.payload.planId;
 
     // plan → decision → action: both decisions descend from a plan and carry their action.
+    const revisedRetrievalId = scenario.events.ofType('MEMORY_RETRIEVED')[1]?.payload.retrievalId;
+    expect(decisions[0]?.provenance.retrievalIds).toEqual([retrievalId]);
+    expect(decisions[1]?.provenance.retrievalIds).toEqual([retrievalId, revisedRetrievalId]);
+    expect(decisions[0]?.provenance.memoryRecordIds).toEqual([SEED_KNOWLEDGE_ID]);
+    expect(decisions[1]?.provenance.memoryRecordIds).toContain(SEED_KNOWLEDGE_ID);
     for (const decision of decisions) {
-      expect(decision.provenance.retrievalIds).toEqual([retrievalId]);
-      expect(decision.provenance.memoryRecordIds).toEqual([SEED_KNOWLEDGE_ID]);
       expect(decision.actionId).toBeDefined();
     }
     expect(decisions[0]?.provenance.planIds).toEqual([planId]);
@@ -227,7 +239,7 @@ describe('autonomous loop: tool ok → evaluation failure → strategy change �
       toolCompleted.map((e) => e.correlation.observationId),
     );
     expect(lesson.provenance.planIds).toEqual([planId, outcome.finalPlan?.planId]);
-    expect(lesson.provenance.retrievalIds).toEqual([retrievalId]);
+    expect(lesson.provenance.retrievalIds).toEqual([retrievalId, revisedRetrievalId]);
     expect(lesson.provenance.memoryRecordIds).toContain(SEED_KNOWLEDGE_ID);
     expect(lesson.provenance.memoryRecordIds).toContain(experiences[1]?.recordId);
   });
