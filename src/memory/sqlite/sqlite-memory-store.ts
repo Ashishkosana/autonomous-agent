@@ -2,13 +2,12 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { MemoryRecordId } from '../../domain/ids.js';
 import { MemoryStoreError } from '../errors.js';
 import {
-  PERSISTENT_MEMORY_KINDS,
   type MemoryRecordOfKind,
   type PersistentMemoryKind,
   type PersistentMemoryRecord,
 } from '../records.js';
 import type { MemoryQuery, MemoryStore } from '../store.js';
-import { assertStorableRecord } from '../validate.js';
+import { assertStorableRecord, parseStoredRecord } from '../validate.js';
 
 /**
  * MemoryStore on a single SQLite file through Node's built-in `node:sqlite`
@@ -257,32 +256,7 @@ function whereClause(query: MemoryQuery): { where: string; params: SqlParam[] } 
 }
 
 function rowToRecord(row: RecordRow): PersistentMemoryRecord {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(row.body);
-  } catch (error: unknown) {
-    throw new MemoryStoreError(
-      `Stored memory record ${row.record_id} is not valid JSON`,
-      'corrupt_record',
-      row.record_id,
-      { cause: error },
-    );
-  }
-  const record = parsed as { recordId?: unknown; kind?: unknown };
-  if (
-    typeof parsed !== 'object' ||
-    parsed === null ||
-    record.recordId !== row.record_id ||
-    record.kind !== row.kind ||
-    !PERSISTENT_MEMORY_KINDS.includes(row.kind as PersistentMemoryKind)
-  ) {
-    throw new MemoryStoreError(
-      `Stored memory record ${row.record_id} does not match its index row`,
-      'corrupt_record',
-      row.record_id,
-    );
-  }
-  return parsed as PersistentMemoryRecord;
+  return parseStoredRecord(row.body, row.record_id, row.kind);
 }
 
 function ensureSchemaVersion(db: DatabaseSync, path: string): void {

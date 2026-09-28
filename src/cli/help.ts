@@ -34,20 +34,26 @@ Environment
   AGENT_EMBEDDING_* is optional. Unset means retrieval is lexical only.
   AGENT_MEMORY_PATH overrides the memory file (default ./.agent/memory.sqlite).
   AGENT_MEMORY_BACKEND=sqlite is assumed when only the path is set.
+  AGENT_MEMORY_BACKEND=neon stores records in Neon Postgres. Set
+  AGENT_MEMORY_URL, NEON_DATABASE_URL, or DATABASE_URL. The password is
+  never printed. SQLite is the fallback when neon is not selected.
 
 Execution
-  Every run uses the local Docker/Linux sandbox (image agent-sandbox-local).
+  Every CLI run uses the local Docker/Linux sandbox (image agent-sandbox-local).
   There is no fallback to the host. If Docker or the image is missing, the
   CLI exits. Build the image with: npm run sandbox:build
   /workspace is inside the container. The container is destroyed when the
   run finishes, is interrupted, or fails. Files there are not copied to the host.
+  Hugging Face Spaces use a separate entrypoint (spaces/huggingface/server.ts)
+  because a Space has no nested Docker daemon.
 
 Memory
-  Records are written to the SQLite file above and kept after the process
-  exits, so a later run can retrieve them. --memory off keeps those writes
-  but installs SuppressedRetriever: the run does not read the store and does
-  not embed the goal. Write-time indexing still embeds new records when an
-  embedding endpoint is configured.
+  Records are written to the backend above and kept after the process exits,
+  so a later run can retrieve them. Neon records also survive a Space restart.
+  --memory off keeps those writes but installs SuppressedRetriever: the run
+  does not read the store and does not embed the goal. Write-time indexing
+  still embeds new records when an embedding endpoint is configured.
+  Learning here means those records, not a change to model weights.
 
 Success criteria
   The evaluator does not trust the model. A goal with no mechanical criterion

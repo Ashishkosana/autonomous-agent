@@ -87,4 +87,23 @@ not a pair
     expect(redacted).not.toContain(SECRET);
     expect(redacted).toContain('[REDACTED]');
   });
+
+  it('labels Neon memory without printing the password or the connection string', () => {
+    const password = 'super-secret-pw';
+    const url = `postgres://agent:${password}@ep-example.neon.tech/agent`;
+    const startup = resolveCliStartup(
+      runArgs(['Create a file']),
+      { ...modelEnv, AGENT_MEMORY_BACKEND: 'neon', DATABASE_URL: url },
+      '/work',
+    );
+    const banner = formatStartupBanner(startup, 'Docker (agent-sandbox-local:0.1.0)');
+    expect(banner).toContain('Memory: neon @ agent@ep-example.neon.tech/agent');
+    expect(banner).not.toContain(password);
+    expect(banner).not.toContain(url);
+    const redacted = new SecretRedactor(
+      configuredSecrets(startup.model, startup.embedding, startup.memory),
+    ).redact(`leaked ${url} and ${password}`);
+    expect(redacted).not.toContain(password);
+    expect(redacted).not.toContain('ep-example');
+  });
 });

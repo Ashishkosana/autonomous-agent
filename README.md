@@ -1,3 +1,13 @@
+---
+title: Autonomous agent
+emoji: 🔥
+colorFrom: yellow
+colorTo: red
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Autonomous agent
 
 A measurable memory-augmented autonomous agent with deterministic evaluation and observability.
@@ -95,6 +105,8 @@ src/
   sandbox/     ExecutionEnvironment contract
   sandbox/cloudflare/  CloudflareSandboxEnvironment, SandboxClient port, HTTP client, wire protocol (no SDK import)
   sandbox/local/       LocalLinuxEnvironment, ContainerRuntime port, container scripts, DockerCliRuntime
+  sandbox/space/       SpaceProcessEnvironment — commands in the current container (Hugging Face Space)
+  adapters/neon/  Neon Postgres MemoryStore, semantic index, run metrics (the only `pg` import)
   storage/     PersistentStorage contract, key grammar, archiveArtifacts, env config
   storage/local/  FilesystemStorage — the only place node:fs is used
   memory/      working memory, persistent record kinds, store/retrieval contracts, record validation, LexicalRetriever, HybridRetriever, IndexedMemoryStore, searchableText, env config
@@ -103,7 +115,8 @@ src/
   agent/       Planner / ActionSelector / Executor / Learner / KnowledgeIngestor contracts and implementations
   agent/runtime/  AgentRuntime loop, RunSession, RunUsageTracker, composition root (`createAutonomousRun`)
   cli/         argument parsing, startup banner, and event rendering for `npm run agent`
-  composition/ local Docker run: one `AgentRuntime`, SQLite memory, standard tools, deterministic evaluator
+  composition/ local Docker run, and the Space run (Neon or SQLite, standard tools, deterministic evaluator)
+spaces/huggingface/  Docker Space HTTP entrypoint (port 7860)
 tests/         contract, behavioural and architecture-rule tests
 tests/runtime/ end-to-end runtime scenarios (recovery, limits, give-up, provenance, ordering, E-000 over the wire adapter)
 tests/models/  model layer: wire translation, chat + embedding adapters against a real local HTTP server, config, resilience, telemetry, redaction
@@ -111,6 +124,7 @@ tests/tools/   standard tools over the fake environment; over REAL Linux namespa
 tests/memory/  MemoryStore contract suite (test store + SQLite), SQLite durability, Lexical/Hybrid retrievers, semantic index, config, E-007 and E-009 (two OS processes, two sandboxes)
 tests/storage/ PersistentStorage contract suite, FilesystemStorage confinement, archiveArtifacts
 tests/sandbox/ Cloudflare adapter, gateway handler and HTTP client unit tests (fake sandbox client)
+tests/integration/neon/        tests that need a REAL Postgres database; skip loudly without a URL, fail under npm run test:neon
 tests/integration/cloudflare/  tests that need a REAL Cloudflare sandbox; skip loudly without credentials
 tests/integration/local/       tests that need REAL Docker; skip loudly by default, fail (never skip) under npm run test:local
 tests/integration/model/       tests that need a REAL model endpoint; skip loudly by default, fail (never skip) under npm run test:model
@@ -248,6 +262,71 @@ export AGENT_STORAGE_ROOT=./.agent/storage
 Delete the file and the directory to forget everything. Details, contract and evidence:
 ADR-005, E-007 and E-007b in `docs/experiments.md`.
 
+### What “learning” means here
+
+The agent does not train, fine-tune, or update foundation-model weights. A run
+learns by writing records: knowledge taken from `web.fetch` or `fs.read`,
+experience of what a tool did, the decision that chose it, and a lesson when
+a later attempt succeeds after a failure. A later run retrieves those records
+and can cite them. Efficiency is measured, not scored: iterations, tool calls,
+tokens, whether the goal completed, and retrieval hit rate. Comparing a cold
+run with a warm run of the same goal is E-010. The comparison is not evidence
+that memory caused the difference.
+
+### Neon Postgres (memory that survives a Space restart)
+
+```bash
+export AGENT_MEMORY_BACKEND=neon
+export DATABASE_URL=postgres://USER:PASSWORD@HOST/DATABASE   # or NEON_DATABASE_URL or AGENT_MEMORY_URL
+```
+
+Create a dedicated Neon database or branch. `npm run test:neon` truncates the
+agent tables in that database. The password is never printed; the CLI banner
+shows `neon @ user@host/db`. SQLite remains the backend when `neon` is not
+selected. One process writes one backend.
+
+```bash
+npm run test:neon          # fails if no connection string is set
+npm run experiment:e010    # the cold/warm pair against that database
+```
+
+Details: ADR-010.
+
+### Hugging Face Space
+
+The repository root `Dockerfile` is a Docker Space (port 7860). It is not the
+sandbox image under `sandbox/local-linux/`. A free Space has no Docker daemon,
+so the Space runs `SpaceProcessEnvironment`: commands execute in the Space
+container, file tools stay under the workspace, and the command environment
+does not include `DATABASE_URL`. A shell can still read other files in the
+container. Prefer a private Space, and do not put secrets in the image.
+
+1. Create a Docker Space from this GitHub repository (the Space card is the
+   YAML block at the top of this README: `sdk: docker`, `app_port: 7860`).
+2. In the Space settings, add secrets (see `.env.example`):
+   - `AGENT_MODEL_PROVIDER`, `AGENT_MODEL_BASE_URL`, `AGENT_MODEL_NAME`, `AGENT_MODEL_API_KEY`
+   - `AGENT_EMBEDDING_PROVIDER`, `AGENT_EMBEDDING_BASE_URL`, `AGENT_EMBEDDING_MODEL`, `AGENT_EMBEDDING_API_KEY` (optional)
+   - `DATABASE_URL` or `NEON_DATABASE_URL`
+3. The page lets you run one goal with mechanical criteria and shows the event
+   stream. The default goal writes `/workspace/hello.txt` containing
+   `AGENT_ALIVE`. Without a database URL the page uses SQLite under `/tmp`
+   and says that a restart drops it.
+
+The CLI still requires Docker and does not fall back to the host or to the
+Space process environment.
+
+### Efficiency experiment (E-010)
+
+`npm test` runs a scripted pair: the first run fetches a stand-in public page,
+stores it as knowledge, and writes the report on the second iteration; the
+second run retrieves that knowledge, cites it, and writes the report in one
+tool call. That proves the measurement. It does not prove a real model improved.
+
+To measure on Neon, point `DATABASE_URL` at a dedicated database and run
+`npm run experiment:e010`. To measure a real model, run the same goal twice
+with `npm run agent` as written in `docs/experiments.md` (E-010) and record
+the counters the CLI prints. Do not invent the numbers.
+
 ### Semantic retrieval (optional, needs an embedding model)
 
 Without an embedding model, retrieval is keyword-only and says so (`signalsUsed` never
@@ -294,7 +373,7 @@ Secrets live only in the environment or Wrangler secrets; see `.env.example` and
 
 - Core modules never import Cloudflare or model-vendor SDKs (`tests/architecture.test.ts`).
 - `src/` has no third-party runtime dependencies outside an explicit, per-file adapter
-  allowlist (currently empty) that may never name a core directory.
+  allowlist (`pg` in `src/adapters/neon/pg-client.ts` only) that may never name a core directory.
 - `src/` never reads `process.env` — configuration is resolved at composition roots and
   passed in; network `fetch` is confined to the two named adapters (the model transport and
   the sandbox HTTP client); no model adapter retains the API key as a property.

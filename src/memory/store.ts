@@ -9,9 +9,10 @@ import type {
  * Structured storage for persistent memory records. Backs the "metadata
  * filtering" stage of retrieval and is the source of truth for every record.
  *
- * V1 backend: SQLite through `node:sqlite` (`./sqlite/`, ADR-005). The
- * contract below is what every backend — including the test store — must
- * satisfy; `tests/support/memory-store-contract.ts` enforces it.
+ * Backends: SQLite through `node:sqlite` (`./sqlite/`, ADR-005) and Neon
+ * Postgres (`src/adapters/neon/`, ADR-010). One process uses one of them.
+ * The contract below is what every backend — including the test store —
+ * must satisfy; `tests/support/memory-store-contract.ts` enforces it.
  *
  * Ordering: `query` returns records oldest-first by `createdAt`; records with
  * the same timestamp keep the order in which they were first stored. `limit`

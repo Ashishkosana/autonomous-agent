@@ -157,6 +157,18 @@ Retrieval itself runs once, on the goal text, before planning (`AgentRuntime.ret
 
 `ComparableRunSpec` plus `comparisonMismatches` is the freeze-list for a later memory-on / memory-off pair (goal, criteria, limits, model id, tools, evaluator name, retrieval weights and threshold and diversity and top-k). `memory: 'off'` uses `SuppressedRetriever`, which does not read the store or call \(E\). **PROPOSED/FUTURE:** running that pair repeatedly and estimating an effect.
 
+## 11. Efficiency comparison — IMPLEMENTED measurement, not a score
+
+`efficiencyFromRun` reads counters the run already kept:
+
+- iterations, tool calls, model calls, input tokens, output tokens
+- `succeeded` is `status === 'completed'`
+- `retrievalHitRate` is the fraction of retrievals that were not suppressed and returned at least one record. No retrieval ran → `null`. One goal-level retrieval → `0` or `1`.
+
+`compareEfficiency(cold, warm)` is true only when the goal statement is the same, the warm run completed, and at least one of these holds: fewer iterations, fewer tool calls, or the warm run cited a record id that its own retrieval returned. Fewer tokens is recorded and is not part of that boolean.
+
+The note printed with the comparison says the boolean is not a learning score and not evidence that memory caused the difference. Weights are not trained. **PROPOSED/FUTURE:** repeating the pair and estimating an effect.
+
 ## What this agent does
 
 - Calls a foundation model for plans and actions.

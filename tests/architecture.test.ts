@@ -89,7 +89,9 @@ describe('architecture rules', () => {
    * HERE as `{ file, packages }` — narrow, explicit, reviewed — never by
    * relaxing the rule. Core dirs (CORE_DIRS) may never appear in this list.
    */
-  const THIRD_PARTY_ALLOWLIST: readonly { file: string; packages: readonly string[] }[] = [];
+  const THIRD_PARTY_ALLOWLIST: readonly { file: string; packages: readonly string[] }[] = [
+    { file: 'adapters/neon/pg-client.ts', packages: ['pg'] },
+  ];
 
   it('src has no runtime dependencies on third-party packages outside the explicit adapter allowlist', () => {
     for (const entry of THIRD_PARTY_ALLOWLIST) {
@@ -153,13 +155,16 @@ describe('architecture rules', () => {
     expect(sdkImporters).toEqual(['worker/src/index.ts', 'worker/src/sdk-sandbox-client.ts']);
   });
 
-  it('only the Docker CLI runtime spawns processes; the local adapter itself is engine-agnostic', () => {
+  it('only the Docker CLI runtime and the Space process environment spawn processes', () => {
     const spawners = srcFiles
       .filter((file) =>
         importSpecifiers(readFileSync(file, 'utf8')).some((spec) => spec === 'node:child_process'),
       )
       .map((file) => relative(SRC_ROOT, file).split(/[\\/]/).join('/'));
-    expect(spawners).toEqual(['sandbox/local/docker-cli-runtime.ts']);
+    expect(spawners).toEqual([
+      'sandbox/local/docker-cli-runtime.ts',
+      'sandbox/space/space-process-environment.ts',
+    ]);
     const adapter = readFileSync(
       join(SRC_ROOT, 'sandbox', 'local', 'local-linux-environment.ts'),
       'utf8',
@@ -202,7 +207,7 @@ describe('architecture rules', () => {
       if (!rel.startsWith('agent/')) continue;
       for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {
         expect(spec, `${rel} imports a concrete backend ${spec}`).not.toMatch(
-          /memory\/(sqlite|config)|storage\/(local|config)/,
+          /memory\/(sqlite|config)|storage\/(local|config)|adapters\/neon/,
         );
       }
     }
