@@ -1,5 +1,7 @@
 # Autonomous agent
 
+[![CI](https://github.com/Ashishkosana/autonomous-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Ashishkosana/autonomous-agent/actions/workflows/ci.yml)
+
 A measurable memory-augmented autonomous agent with deterministic evaluation and observability.
 
 It receives one high-level goal, plans and acts inside an isolated Linux sandbox, checks
@@ -133,6 +135,13 @@ npm run typecheck    # strict TypeScript, no emit
 npm run format       # prettier --write
 npm run agent -- --help
 ```
+
+Pull requests and pushes to `main` run the same checks in
+[GitHub Actions](.github/workflows/ci.yml): `npm ci`, `npm run format:check`,
+`npm run typecheck`, and `npm test`. There is no ESLint config, and `typecheck`
+does not emit a build. Docker, Cloudflare, and real-model suites stay skipped
+unless their environment variables are set. Linux-namespace suites also skip on
+GitHub-hosted runners, which have no host directory at `/workspace`.
 
 ## Command line
 
