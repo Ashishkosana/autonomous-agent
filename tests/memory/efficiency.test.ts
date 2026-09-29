@@ -17,6 +17,7 @@ function metrics(overrides: Partial<RunMetricsRecord> = {}): RunMetricsRecord {
     inputTokens: 100,
     outputTokens: 40,
     totalTokens: 140,
+    durationMs: 1000,
     retrievalHitRate: 0,
     retrievalHitCount: 0,
     signalsUsed: ['metadata', 'keyword'],
@@ -96,6 +97,21 @@ describe('efficiency comparison', () => {
     );
     expect(comparison.sameGoal).toBe(false);
     expect(comparison.mechanicalConditionMet).toBe(false);
+  });
+
+  it('reports a shorter duration and does not treat it as the mechanical condition', () => {
+    const comparison = compareEfficiency(
+      metrics({ durationMs: 5_000 }),
+      metrics({
+        runId: 'run-warm',
+        iterations: 4,
+        toolCalls: 6,
+        durationMs: 1_000,
+      }),
+    );
+    expect(comparison.shorterDuration).toBe(true);
+    expect(comparison.mechanicalConditionMet).toBe(false);
+    expect(comparison.note).toContain('does not train foundation-model weights');
   });
 
   it('treats fewer tokens as information and not as the mechanical condition', () => {

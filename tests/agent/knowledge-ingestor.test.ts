@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { IngestionInput } from '../../src/agent/contracts.js';
 import { ObservationKnowledgeIngestor } from '../../src/agent/knowledge-ingestor.js';
 import type { Observation } from '../../src/domain/observation.js';
-import { asDecisionId, asObservationId } from '../../src/domain/ids.js';
+import { asActionId, asDecisionId, asObservationId, type ActionId } from '../../src/domain/ids.js';
 import type { ToolResult } from '../../src/tools/contracts.js';
+import { htmlToText } from '../../src/tools/web/html-to-text.js';
 import { FixedClock, SequentialIdGenerator } from '../support/deterministic.js';
 import { ACTION_ID, CORRELATION, makeAction, makeGoal, makePlan } from '../support/fixtures.js';
 
@@ -34,11 +35,16 @@ function errorResult(toolName: string): ToolResult<unknown> {
   };
 }
 
-function input(toolResult: ToolResult<unknown>, toolName = toolResult.toolName): IngestionInput {
+function input(
+  toolResult: ToolResult<unknown>,
+  toolName = toolResult.toolName,
+  extras?: { readonly actionId?: ActionId; readonly actionInput?: unknown },
+): IngestionInput {
   const plan = makePlan();
+  const actionId = extras?.actionId ?? ACTION_ID;
   const observation: Observation = {
     observationId: asObservationId('obs-1'),
-    actionId: ACTION_ID,
+    actionId,
     correlation: CORRELATION,
     toolResult,
     artifacts: [],
@@ -49,7 +55,12 @@ function input(toolResult: ToolResult<unknown>, toolName = toolResult.toolName):
     correlation: CORRELATION,
     goal: makeGoal(),
     task: plan.tasks[0]!,
-    action: makeAction({ toolName, input: {}, decisionId: asDecisionId('dec-1') }),
+    action: makeAction({
+      actionId,
+      toolName,
+      input: extras?.actionInput ?? {},
+      decisionId: asDecisionId('dec-1'),
+    }),
     observation,
   };
 }
@@ -144,6 +155,258 @@ describe('ObservationKnowledgeIngestor: web.fetch', () => {
     expect(record.content).toHaveLength(101);
     expect(record.content.endsWith('…')).toBe(true);
     expect(record.summary).toContain('truncated');
+  });
+});
+
+const EXAMPLE_HTML = `<!doctype html><html><head><title>Example Domain</title></head>
+<body><h1>Example Domain</h1><p>This domain is for use in illustrative examples in documents. You may use this domain in literature without prior coordination or asking for permission.</p></body></html>`;
+
+function httpResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    url: 'https://example.com/',
+    finalUrl: 'https://example.com/',
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+    body: EXAMPLE_HTML,
+    bodyTruncated: false,
+    bodyBytes: EXAMPLE_HTML.length,
+    redirects: 0,
+    durationMs: 12,
+    ...overrides,
+  };
+}
+
+describe('ObservationKnowledgeIngestor: http.request documents', () => {
+  it('turns an HTML page into one knowledge record with the source URL and a capped excerpt', async () => {
+    const { knowledge, skipped } = await ingestor().ingest(
+      input(okResult('http.request', httpResponse())),
+    );
+    expect(skipped).toBeUndefined();
+    expect(knowledge).toHaveLength(1);
+    const record = knowledge[0]!;
+    const page = htmlToText(EXAMPLE_HTML);
+    expect(record.kind).toBe('knowledge');
+    expect(record.title).toBe('Example Domain');
+    expect(record.content).toBe(page.text);
+    expect(record.content).not.toContain('<');
+    expect(record.confidence).toBe(0.5);
+    expect(record.tags).toEqual(['ingested', 'http.request', 'example.com']);
+    expect(record.sources).toEqual([
+      {
+        url: 'https://example.com/',
+        title: 'Example Domain',
+        toolName: 'http.request',
+        retrievedAt: '2026-01-01T00:00:02.000Z',
+        actionId: ACTION_ID,
+      },
+    ]);
+    expect(record.provenance).toEqual({
+      actionIds: [ACTION_ID],
+      observationIds: [asObservationId('obs-1')],
+      planIds: [makeAction().planId],
+      decisionIds: [asDecisionId('dec-1')],
+    });
+    expect(record.summary).toContain('http.request');
+  });
+
+  it('treats an explicit GET the same as the tool default, and keeps plain text', async () => {
+    const { knowledge } = await ingestor().ingest(
+      input(okResult('http.request', httpResponse()), 'http.request', {
+        actionInput: { url: 'https://example.com/', method: 'get' },
+      }),
+    );
+    expect(knowledge).toHaveLength(1);
+
+    const plain = httpResponse({
+      url: 'https://example.test/notes.txt',
+      finalUrl: 'https://example.test/notes.txt',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: PAGE_TEXT,
+    });
+    const untitled = await ingestor().ingest(input(okResult('http.request', plain)));
+    expect(untitled.knowledge[0]?.title).toBe('https://example.test/notes.txt');
+    expect(untitled.knowledge[0]?.content).toBe(PAGE_TEXT);
+    expect(untitled.knowledge[0]?.confidence).toBe(0.5);
+  });
+
+  it('ingests HTML when the response omitted content-type', async () => {
+    const { knowledge } = await ingestor().ingest(
+      input(okResult('http.request', httpResponse({ headers: {} }))),
+    );
+    expect(knowledge[0]?.title).toBe('Example Domain');
+    expect(knowledge[0]?.content).toContain('illustrative examples');
+  });
+
+  it('caps a long HTML page the same way as web.fetch', async () => {
+    const long = `<html><head><title>Long page</title></head><body><p>${'word '.repeat(1000)}</p></body></html>`;
+    const { knowledge } = await ingestor({ maxContentChars: 100 }).ingest(
+      input(okResult('http.request', httpResponse({ body: long }))),
+    );
+    const record = knowledge[0]!;
+    expect(record.content).toHaveLength(101);
+    expect(record.content.endsWith('…')).toBe(true);
+    expect(record.summary).toContain('truncated');
+  });
+
+  it('does not ingest HTTP errors, non-GET calls, JSON, binary, or noise', async () => {
+    const cases: { output: Record<string, unknown>; actionInput?: unknown; skipped: string }[] = [
+      {
+        output: httpResponse({ status: 404, body: EXAMPLE_HTML }),
+        skipped: 'HTTP 404 is not knowledge',
+      },
+      {
+        output: httpResponse(),
+        actionInput: { method: 'POST', url: 'https://example.com/' },
+        skipped: 'HTTP POST is not a document read',
+      },
+      {
+        output: httpResponse({
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: 'Example Domain', text: PAGE_TEXT }),
+        }),
+        skipped: 'content type application/json is not a document',
+      },
+      {
+        output: httpResponse({
+          headers: { 'content-type': 'text/plain' },
+          body: JSON.stringify({ ok: true, note: PAGE_TEXT }),
+        }),
+        skipped: 'http.request body is not a document',
+      },
+      {
+        output: httpResponse({
+          headers: { 'content-type': 'application/octet-stream' },
+          body: PAGE_TEXT,
+        }),
+        skipped: 'content type application/octet-stream is not a document',
+      },
+      {
+        output: httpResponse({
+          headers: { 'content-type': 'image/png' },
+          body: PAGE_TEXT,
+        }),
+        skipped: 'content type image/png is not a document',
+      },
+      {
+        output: httpResponse({
+          headers: { 'content-type': 'text/html' },
+          body: `<html><body>${'A'.repeat(80)}\0</body></html>`,
+        }),
+        skipped: 'http.request body is binary',
+      },
+      {
+        output: httpResponse({ headers: {}, body: 'not-a-page' }),
+        skipped: 'http.request body is not a document',
+      },
+      {
+        output: httpResponse({
+          headers: { 'content-type': 'text/html' },
+          body: '<html><title>Hi</title><body>OK</body></html>',
+        }),
+        skipped: 'http.request body is not a document',
+      },
+    ];
+    for (const entry of cases) {
+      const { knowledge, skipped } = await ingestor().ingest(
+        input(okResult('http.request', entry.output), 'http.request', {
+          ...(entry.actionInput !== undefined ? { actionInput: entry.actionInput } : {}),
+        }),
+      );
+      expect(knowledge, entry.skipped).toEqual([]);
+      expect(skipped, JSON.stringify(entry.output['headers'])).toBe(entry.skipped);
+    }
+
+    const shapeless = await ingestor().ingest(
+      input(okResult('http.request', { body: EXAMPLE_HTML })),
+    );
+    expect(shapeless.knowledge).toEqual([]);
+    expect(shapeless.skipped).toBe('http.request output lacks url/status/body');
+  });
+
+  it('writes one record when web.fetch and http.request read the same URL in one action', async () => {
+    const fetched = okResult('web.fetch', {
+      url: 'https://example.com',
+      finalUrl: 'https://example.com/',
+      status: 200,
+      contentType: 'text/html',
+      title: 'Example Domain',
+      text: htmlToText(EXAMPLE_HTML).text,
+    });
+    const requested = okResult('http.request', httpResponse());
+
+    const fetchFirst = ingestor();
+    expect((await fetchFirst.ingest(input(fetched))).knowledge).toHaveLength(1);
+    const afterFetch = await fetchFirst.ingest(input(requested));
+    expect(afterFetch.knowledge).toEqual([]);
+    expect(afterFetch.skipped).toBe('same URL already ingested in this action');
+
+    const httpFirst = ingestor();
+    expect((await httpFirst.ingest(input(requested))).knowledge).toHaveLength(1);
+    const afterHttp = await httpFirst.ingest(input(fetched));
+    expect(afterHttp.knowledge).toEqual([]);
+    expect(afterHttp.skipped).toBe('same URL already ingested in this action');
+  });
+
+  it('treats a trailing slash as the same document URL within one action', async () => {
+    const reader = ingestor();
+    const first = await reader.ingest(
+      input(
+        okResult('web.fetch', {
+          url: 'https://example.com/guide',
+          finalUrl: 'https://example.com/guide',
+          status: 200,
+          title: 'Guide',
+          text: PAGE_TEXT,
+        }),
+      ),
+    );
+    const second = await reader.ingest(
+      input(
+        okResult(
+          'http.request',
+          httpResponse({
+            url: 'https://example.com/guide/',
+            finalUrl: 'https://example.com/guide/',
+            body: `<html><head><title>Guide</title></head><body><p>${PAGE_TEXT}</p></body></html>`,
+          }),
+        ),
+      ),
+    );
+    expect(first.knowledge).toHaveLength(1);
+    expect(second.knowledge).toEqual([]);
+    expect(second.skipped).toBe('same URL already ingested in this action');
+  });
+
+  it('a later action may record the same URL again', async () => {
+    const reader = ingestor();
+    const page = okResult('http.request', httpResponse());
+    const first = await reader.ingest(input(page));
+    const second = await reader.ingest(
+      input(page, 'http.request', { actionId: asActionId('act-2') }),
+    );
+    expect(first.knowledge).toHaveLength(1);
+    expect(second.knowledge).toHaveLength(1);
+    expect(second.knowledge[0]?.sources[0]?.actionId).toBe(asActionId('act-2'));
+  });
+
+  it('a different URL in the same action is still knowledge', async () => {
+    const reader = ingestor();
+    await reader.ingest(input(okResult('http.request', httpResponse())));
+    const other = await reader.ingest(
+      input(
+        okResult(
+          'http.request',
+          httpResponse({
+            url: 'https://example.test/notes.txt',
+            finalUrl: 'https://example.test/notes.txt',
+            headers: { 'content-type': 'text/plain' },
+            body: PAGE_TEXT,
+          }),
+        ),
+      ),
+    );
+    expect(other.knowledge).toHaveLength(1);
+    expect(other.knowledge[0]?.sources[0]?.url).toBe('https://example.test/notes.txt');
   });
 });
 

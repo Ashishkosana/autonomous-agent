@@ -26,7 +26,9 @@
     "sandbox:build": "node scripts/sandbox-image.mjs build",
     "sandbox:clean": "node scripts/sandbox-image.mjs clean",
     "sandbox:remove": "node scripts/sandbox-image.mjs remove",
-    "agent": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./scripts/register-ts.mjs scripts/agent.ts"
+    "agent": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./scripts/register-ts.mjs scripts/agent.ts",
+    "compare": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./scripts/register-ts.mjs scripts/compare-runs.ts",
+    "smoke": "vitest run tests/space/http.test.ts tests/runtime/efficiency-loop.test.ts tests/memory/sqlite-run-metrics.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260920.1",

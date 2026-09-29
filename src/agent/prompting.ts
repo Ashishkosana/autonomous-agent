@@ -1,4 +1,7 @@
+import type { VerifiableCriterion } from '../domain/criteria.js';
+import { collectCriteria } from '../domain/criteria.js';
 import type { Goal } from '../domain/goal.js';
+import type { Observation } from '../domain/observation.js';
 import type { MemoryRecordId, RetrievalId } from '../domain/ids.js';
 import type { Plan } from '../domain/plan.js';
 import type { EvaluationResult } from '../evaluation/contracts.js';
@@ -20,7 +23,63 @@ export function renderGoal(goal: Goal): string {
   if (goal.successCriteria.length > 0) {
     lines.push(`SUCCESS CRITERIA: ${goal.successCriteria.join('; ')}`);
   }
+  const checks = (goal.verifiableCriteria ?? []).map(formatCriterion);
+  if (checks.length > 0) lines.push(`MUST PASS: ${checks.join('; ')}`);
   return lines.join('\n');
+}
+
+function formatCriterion(criterion: VerifiableCriterion): string {
+  switch (criterion.kind) {
+    case 'file_contains':
+      return `file ${criterion.path} must contain ${JSON.stringify(criterion.marker)}`;
+    case 'file_exists':
+      return `file ${criterion.path} must exist`;
+    case 'json_file':
+      return `file ${criterion.path} must be JSON`;
+    case 'command_exits_zero':
+      return `command must exit 0: ${criterion.command}`;
+    case 'http_status':
+      return `HTTP status ${criterion.status}`;
+    case 'tool_succeeded':
+      return criterion.toolName === undefined
+        ? 'the tool call must succeed'
+        : `${criterion.toolName} must succeed`;
+  }
+}
+
+/**
+ * After a page fetch, the file criterion is still unmet. Say so before the
+ * model spends another model call fetching the same URL.
+ */
+export function renderNextStepHint(goal: Goal, attempts: readonly TaskAttempt[]): string {
+  const fetched = attempts.some(
+    (attempt) =>
+      attempt.action.toolName === 'web.fetch' && attempt.observation.toolResult.status === 'ok',
+  );
+  if (!fetched) return '';
+  const wrote = attempts.some(
+    (attempt) =>
+      attempt.action.toolName === 'fs.write' && attempt.observation.toolResult.status === 'ok',
+  );
+  if (wrote) return '';
+  const { criteria } = collectCriteria(goal.verifiableCriteria, goal.successCriteria);
+  const file = criteria.find(
+    (criterion) => criterion.kind === 'file_contains' || criterion.kind === 'file_exists',
+  );
+  const wantsFile = file !== undefined || /\b(write|lesson\.txt|fs\.write)\b/i.test(goal.statement);
+  if (!wantsFile) return '';
+  const target = file !== undefined ? file.path : 'the file named in the goal';
+  const marker =
+    file?.kind === 'file_contains' ? ` The file must contain ${JSON.stringify(file.marker)}.` : '';
+  return `NEXT ACTION: call fs.write to create ${target}.${marker} The page text is in the observation above. Do not call web.fetch again.`;
+}
+
+export function renderRecentObservations(observations: readonly Observation[]): string {
+  if (observations.length === 0) return '';
+  return [
+    'RECENT OBSERVATIONS:',
+    ...observations.slice(-3).map((observation) => `- ${observation.summary}`),
+  ].join('\n');
 }
 
 export function renderTools(tools: readonly ToolDescriptor[]): string {

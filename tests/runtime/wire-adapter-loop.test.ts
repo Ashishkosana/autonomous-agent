@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ToolActionProposal } from '../../src/models/contracts.js';
 import { OpenAICompatibleProvider } from '../../src/models/openai-compatible/provider.js';
+import { toWireToolName } from '../../src/models/openai-compatible/wire.js';
 import { FixedClock, SequentialIdGenerator } from '../support/deterministic.js';
 import type { FakeExecutionEnvironment } from '../support/fake-execution-environment.js';
 import { FakeOpenAIServer, completion, type ScriptedReply } from '../support/fake-openai-server.js';
@@ -53,7 +54,7 @@ function toolCall(proposal: ToolActionProposal) {
   switch (proposal.kind) {
     case 'tool':
       return {
-        name: proposal.toolName.replace(/[^A-Za-z0-9_-]/g, '__'),
+        name: toWireToolName(proposal.toolName),
         arguments: {
           input: proposal.input,
           rationale: proposal.rationale,

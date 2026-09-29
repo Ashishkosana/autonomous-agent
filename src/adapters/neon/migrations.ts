@@ -12,7 +12,7 @@ export interface SqlMigration {
   readonly statements: readonly string[];
 }
 
-export const NEON_SCHEMA_VERSION = 1;
+export const NEON_SCHEMA_VERSION = 2;
 
 const MEMORY_PUT = `
 CREATE OR REPLACE FUNCTION agent_memory_put(
@@ -121,6 +121,12 @@ export const MIGRATIONS: readonly SqlMigration[] = [
       )`,
       `CREATE INDEX IF NOT EXISTS agent_run_metrics_goal ON agent_run_metrics (goal_statement, recorded_at DESC)`,
       MEMORY_PUT,
+    ],
+  },
+  {
+    version: 2,
+    statements: [
+      `ALTER TABLE agent_run_metrics ADD COLUMN IF NOT EXISTS duration_ms INTEGER NOT NULL DEFAULT 0`,
     ],
   },
 ];

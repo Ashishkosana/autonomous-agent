@@ -150,12 +150,42 @@ function appendInstruction(messages: readonly WireMessage[], instruction: string
 export const FINISH_TOOL = 'finish';
 export const GIVE_UP_TOOL = 'give_up';
 
-const WIRE_NAME_PATTERN = /[^A-Za-z0-9_-]/g;
+const WIRE_NAME_ALLOWED = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * OpenAI and Groq function names must match `^[A-Za-z0-9_-]{1,64}$`.
+ * Our tool names use a dot (`web.fetch`). Replacing that dot with `__`
+ * makes Groq's gpt-oss models emit `web.__fetch`, which is not in
+ * `request.tools`, so select_action fails with HTTP 400 before this
+ * client ever sees the call. One underscore stays one identifier:
+ * `web.fetch` → `web_fetch`.
+ *
+ * A name that is already legal is returned unchanged, so a deliberate
+ * `fs__write` is not collapsed into `fs_write`. A name that needed
+ * sanitizing never contains `__`: a run of disallowed characters, and any
+ * underscores touching that run, become a single `_`.
+ */
+export function toWireToolName(name: string): string {
+  if (WIRE_NAME_ALLOWED.test(name)) return name;
+  let out = '';
+  let pendingUnderscore = false;
+  for (const char of name) {
+    if (/[A-Za-z0-9-]/.test(char)) {
+      if (pendingUnderscore && out.length > 0) out += '_';
+      pendingUnderscore = false;
+      out += char;
+    } else {
+      pendingUnderscore = true;
+    }
+  }
+  return out;
+}
 
 /**
  * Function names on the wire are restricted to `[A-Za-z0-9_-]`; our tool
  * names use dots (`fs.write`). The map is bijective within one request and
- * is used to translate the model's choice back.
+ * is used to translate the model's choice back. It does not accept a name
+ * the model invented, including the rejected form `web.__fetch`.
  */
 export class ToolNameMap {
   private readonly toWire = new Map<string, string>();
@@ -163,10 +193,20 @@ export class ToolNameMap {
 
   constructor(names: readonly string[]) {
     for (const name of names) {
-      let wire = name.replace(WIRE_NAME_PATTERN, '__');
-      let suffix = 1;
-      while (this.fromWire.has(wire))
-        wire = `${name.replace(WIRE_NAME_PATTERN, '__')}_${(suffix += 1)}`;
+      const base = toWireToolName(name);
+      if (!WIRE_NAME_ALLOWED.test(base)) {
+        throw new Error(`tool name ${name} cannot be sent as a function name`);
+      }
+      let wire = base;
+      let suffix = 2;
+      while (this.fromWire.has(wire)) {
+        const candidate = `${base}_${suffix}`;
+        suffix += 1;
+        if (!WIRE_NAME_ALLOWED.test(candidate)) {
+          throw new Error(`tool name ${name} cannot be sent as a function name`);
+        }
+        wire = candidate;
+      }
       this.toWire.set(name, wire);
       this.fromWire.set(wire, name);
     }
@@ -200,11 +240,17 @@ const RATIONALE_PROPERTIES: Readonly<Record<string, JsonSchema>> = {
   },
 };
 
+const TOOL_CONTROL_KEYS = new Set(['input', 'rationale', 'confidence', 'alternatives']);
+
 /**
- * Each agent tool becomes a function whose parameters wrap the tool's own
- * input schema under `input`, alongside the rationale fields. The wrapper
- * keeps the tool's schema untouched and gives the runtime a validated
- * rationale even from servers that drop assistant text when calling tools.
+ * Each agent tool becomes a function whose parameters are the tool's own
+ * fields (`url`, `path`, `content`, …) plus optional rationale fields.
+ *
+ * Groq validates the model's arguments against this schema before we see
+ * the call. gpt-oss-120b passes those fields at the top level and omits a
+ * nested `input` object, which produced HTTP 400 "parameters missing
+ * properties: 'input'". `input` is therefore not required. A call that still
+ * wraps arguments under `input` is accepted when we parse it.
  */
 export function toWireTools(
   tools: readonly ToolDescriptor[],
@@ -214,12 +260,8 @@ export function toWireTools(
     type: 'function',
     function: {
       name: names.wireName(tool.name),
-      description: `[${tool.family}] ${tool.description}`,
-      parameters: {
-        type: 'object',
-        properties: { input: tool.inputSchema, ...RATIONALE_PROPERTIES },
-        required: ['input', 'rationale'],
-      },
+      description: `[${tool.family}] ${tool.description} Pass the tool arguments directly. Do not nest them under input.`,
+      parameters: toolParameters(tool),
     },
   }));
   return [
@@ -256,6 +298,25 @@ export function toWireTools(
       },
     },
   ];
+}
+
+/** Tool fields at the top level. Rationale stays optional so a missing one is not a 400. */
+function toolParameters(tool: ToolDescriptor): JsonSchema {
+  const schema = tool.inputSchema;
+  if (schema.type !== 'object' || schema.properties === undefined) {
+    return {
+      type: 'object',
+      properties: { input: schema, ...RATIONALE_PROPERTIES },
+      required: ['input'],
+    };
+  }
+  return {
+    type: 'object',
+    properties: { ...schema.properties, ...RATIONALE_PROPERTIES },
+    ...(schema.required !== undefined && schema.required.length > 0
+      ? { required: [...schema.required] }
+      : {}),
+  };
 }
 
 export function buildToolActionRequest(
@@ -510,19 +571,35 @@ export function proposalFromToolCall(
     const reason = readString(args, 'reason', errors);
     return errors.length > 0 ? parseFail(...errors) : parseOk({ kind: 'give_up', reason });
   }
-  const rationale = readString(args, 'rationale', errors);
+  const repaired = !('input' in args);
+  const input = repaired ? flatToolInput(args) : args['input'];
+  const rationaleText = typeof args['rationale'] === 'string' ? args['rationale'].trim() : '';
+  const rationale =
+    rationaleText.length > 0
+      ? rationaleText
+      : repaired
+        ? `Call ${toolName}.`
+        : readString(args, 'rationale', errors);
   const confidence = parseConfidence(args, errors);
   const alternatives = parseAlternatives(args['alternatives'], errors);
-  if (!('input' in args)) errors.push('input is required');
   if (errors.length > 0) return parseFail(...errors);
   return parseOk({
     kind: 'tool',
     toolName,
-    input: args['input'],
+    input,
     rationale,
     ...(confidence !== undefined ? { confidence } : {}),
     ...(alternatives !== undefined ? { alternatives } : {}),
   });
+}
+
+/** Arguments gpt-oss sends beside rationale, when it skips the `input` object. */
+function flatToolInput(args: Record<string, unknown>): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (!TOOL_CONTROL_KEYS.has(key)) input[key] = value;
+  }
+  return input;
 }
 
 /** A JSON proposal (json tool mode, or text fallback) → proposal. */

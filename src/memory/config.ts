@@ -94,6 +94,10 @@ function openSqlite(path: string): OpenedMemory {
       index = SqliteSemanticIndex.open({ path, embeddings });
       return index;
     },
+    recordEfficiency: (snapshot) => store.recordEfficiency(snapshot),
+    latestEfficiency: (goalStatement) => store.latestEfficiency(goalStatement),
+    listEfficiency: (query) => store.listEfficiency(query),
+    ping: () => store.ping(),
     close() {
       index?.close();
       store.close();

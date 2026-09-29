@@ -65,14 +65,12 @@ export interface RunOutcome {
  * The autonomous control loop. It owns orchestration and termination; every
  * other component only proposes, executes, judges or records.
  *
- *   receive goal → retrieve memory → plan
- *   loop:
- *     stop if a run limit is reached
- *     pick the next task; if none, the goal is complete
- *     ask the selector for an action (or finish / give up)
- *     execute → observe → evaluate → learn → write memory
- *     on failure: diagnose + revise plan (strategy may change), then the next
- *     iteration retries the same task with the revised plan
+ *   goal → retrieve memory → plan
+ *   loop until done or a limit:
+ *     decide (act, finish, or give up)
+ *     tools → observe → evaluate
+ *     write memory (knowledge, experience, decision, lesson)
+ *     on failure: retrieve again, then revise the plan and continue
  */
 export class AgentRuntime {
   private plan: Plan | undefined;
@@ -400,22 +398,28 @@ export class AgentRuntime {
     await this.handleFailure(evaluation, { planId: plan.planId });
   }
 
-  /** Failure → FAILURE_DETECTED → planner diagnoses and revises → PLAN_UPDATED (+ STRATEGY_CHANGED). */
+  /**
+   * Failure → FAILURE_DETECTED → retrieve again (the failure text can match
+   * a lesson the first search missed) → planner revises → PLAN_UPDATED.
+   */
   private async handleFailure(
     evaluation: EvaluationResult,
     correlation: EventCorrelation,
   ): Promise<void> {
     const { session, planner, tools } = this.c;
     const previousPlan = this.requirePlan();
+    const failureText = evaluation.gaps.join('; ') || evaluation.summary;
 
     session.emit(
       'FAILURE_DETECTED',
       {
-        summary: evaluation.gaps.join('; ') || evaluation.summary,
+        summary: failureText,
         source: evaluation.toolStatus === 'error' ? 'tool' : 'evaluation',
       },
       { ...correlation, evaluationId: evaluation.evaluationId },
     );
+
+    await this.retrieveMemory(`${session.goal.statement}\n${failureText}`.slice(0, 4_000));
 
     const revised = await planner.revisePlan({
       goal: session.goal,

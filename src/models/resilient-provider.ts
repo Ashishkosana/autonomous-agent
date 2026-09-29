@@ -26,7 +26,8 @@ export const DEFAULT_RESILIENCE: ResilienceOptions = {
   maxRetries: 2,
   maxReasks: 1,
   baseDelayMs: 500,
-  maxDelayMs: 8_000,
+  // Groq TPM 429s name a wait of a few seconds up to about a minute.
+  maxDelayMs: 60_000,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 

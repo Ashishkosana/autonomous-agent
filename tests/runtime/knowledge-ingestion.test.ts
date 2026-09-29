@@ -1,12 +1,15 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { RunOutcome } from '../../src/agent/runtime/agent-runtime.js';
 import { presentedMemory, renderMemory } from '../../src/agent/prompting.js';
+import { parseFail, parseOk } from '../../src/domain/parse.js';
 import { asGoalId, asMemoryRecordId, asRetrievalId, asRunId } from '../../src/domain/ids.js';
 import type { KnowledgeRecord } from '../../src/memory/records.js';
 import type { ToolActionProposal } from '../../src/models/contracts.js';
+import type { Tool } from '../../src/tools/contracts.js';
 import { createFsReadTool } from '../../src/tools/filesystem/filesystem-tools.js';
 import { resolveToolOptions } from '../../src/tools/support/options.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
+import { htmlToText } from '../../src/tools/web/html-to-text.js';
 import {
   APPROACH_B_CONTENT,
   SEED_KNOWLEDGE_ID,
@@ -164,6 +167,162 @@ describe('knowledge ingestion: nothing is ingested when nothing came back from t
     expect(outcome.state.status).toBe('completed');
     expect(scenario.events.ofType('TOOL_FAILED')).toHaveLength(1);
     expect(scenario.events.ofType('KNOWLEDGE_INGESTED')).toEqual([]);
+  });
+});
+
+const EXAMPLE_URL = 'https://example.com/';
+const EXAMPLE_HTML = `<!doctype html><html><head><title>Example Domain</title></head>
+<body><h1>Example Domain</h1><p>This domain is for use in illustrative examples in documents. You may use this domain in literature without prior coordination or asking for permission.</p></body></html>`;
+
+/**
+ * The loop's example.com goal often calls `http.request`, not `web.fetch`.
+ * The observation is still a public document, so it must become knowledge
+ * with the same source and excerpt rules. A JSON response from the same
+ * tool is the tool call's experience only.
+ */
+function httpRequestTool(response: {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+}): Tool<{ url: string }, Record<string, unknown>> {
+  return {
+    name: 'http.request',
+    family: 'http',
+    description: 'Test double that returns one fixed HTTP response.',
+    inputSchema: {
+      type: 'object',
+      properties: { url: { type: 'string' } },
+      required: ['url'],
+    },
+    outputSchema: { type: 'object' },
+    parseInput(raw) {
+      if (
+        typeof raw === 'object' &&
+        raw !== null &&
+        'url' in raw &&
+        typeof (raw as { url: unknown }).url === 'string'
+      ) {
+        return parseOk({ url: (raw as { url: string }).url });
+      }
+      return parseFail('expected { url: string }');
+    },
+    async execute(input) {
+      return {
+        url: input.url,
+        finalUrl: input.url,
+        status: response.status,
+        headers: response.headers,
+        body: response.body,
+        bodyTruncated: false,
+        bodyBytes: response.body.length,
+        redirects: 0,
+        durationMs: 1,
+      };
+    },
+  };
+}
+
+const fetchExample: ToolActionProposal = {
+  kind: 'tool',
+  toolName: 'http.request',
+  input: { url: EXAMPLE_URL },
+  rationale: 'Read the public example.com page',
+};
+
+describe('knowledge ingestion from an http.request HTML observation', () => {
+  it('writes a knowledge record for the page, and still records the tool call as experience', async () => {
+    const tools = new ToolRegistry()
+      .register(
+        httpRequestTool({
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+          body: EXAMPLE_HTML,
+        }),
+      )
+      .register(writeFileTool);
+    const scenario = await buildScenario({
+      tools,
+      turns: [
+        planTurn([SEED_KNOWLEDGE_ID]),
+        { proposal: fetchExample },
+        reviseTurn({ strategyChanged: true }),
+        { proposal: writeReport(APPROACH_B_CONTENT, 'Write the report from the page') },
+      ],
+    });
+    const outcome = await scenario.run();
+    expect(outcome.state.status).toBe('completed');
+    expect(scenario.events.ofType('TOOL_COMPLETED').map((event) => event.payload.toolName)).toEqual(
+      ['http.request', 'fs.write'],
+    );
+
+    const ingested = scenario.events.ofType('KNOWLEDGE_INGESTED');
+    expect(ingested).toHaveLength(1);
+    const event = ingested[0]!;
+    expect(event.payload.toolName).toBe('http.request');
+    expect(event.payload.source).toBe(EXAMPLE_URL);
+    expect(event.payload.title).toBe('Example Domain');
+    expect(event.payload.confidence).toBe(0.5);
+    expect(event.payload.truncated).toBe(false);
+    const pageText = htmlToText(EXAMPLE_HTML).text;
+    expect(event.payload.keptChars).toBe(pageText.length);
+
+    const record = (await scenario.store.get(event.payload.recordId)) as KnowledgeRecord;
+    expect(record.kind).toBe('knowledge');
+    expect(record.content).toBe(pageText);
+    expect(record.content).toContain('illustrative examples');
+    expect(record.sources[0]).toMatchObject({
+      url: EXAMPLE_URL,
+      toolName: 'http.request',
+      title: 'Example Domain',
+    });
+    const readCompleted = scenario.events.ofType('TOOL_COMPLETED')[0]!;
+    expect(record.provenance.actionIds).toEqual([readCompleted.correlation.actionId]);
+    expect(record.provenance.observationIds).toEqual([readCompleted.correlation.observationId]);
+
+    const kinds = scenario.events.ofType('MEMORY_WRITTEN').map((written) => written.payload.kind);
+    expect(kinds.filter((kind) => kind === 'knowledge')).toEqual(['knowledge']);
+    expect(kinds).toContain('experience');
+    expect(JSON.stringify(ingested)).not.toContain('illustrative examples');
+    // decision + experience for each of two attempts, one lesson, one knowledge record.
+    expect(outcome.state.usage.memoryWrites).toBe(6);
+  });
+
+  it('a JSON http.request writes experience and no knowledge', async () => {
+    const tools = new ToolRegistry()
+      .register(
+        httpRequestTool({
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Example Domain',
+            text: 'This domain is for use in illustrative examples in documents.',
+          }),
+        }),
+      )
+      .register(writeFileTool);
+    const scenario = await buildScenario({
+      tools,
+      turns: [
+        planTurn([SEED_KNOWLEDGE_ID]),
+        { proposal: fetchExample },
+        reviseTurn({ strategyChanged: true }),
+        { proposal: writeReport(APPROACH_B_CONTENT, 'Write the report anyway') },
+      ],
+    });
+    const outcome = await scenario.run();
+    expect(outcome.state.status).toBe('completed');
+    expect(scenario.events.ofType('TOOL_COMPLETED').map((event) => event.payload.toolName)).toEqual(
+      ['http.request', 'fs.write'],
+    );
+    expect(scenario.events.ofType('KNOWLEDGE_INGESTED')).toEqual([]);
+    expect(scenario.events.ofType('MEMORY_WRITTEN').map((event) => event.payload.kind)).toEqual([
+      'decision',
+      'experience',
+      'decision',
+      'experience',
+      'lesson',
+    ]);
+    expect(outcome.state.usage.memoryWrites).toBe(5);
   });
 });
 

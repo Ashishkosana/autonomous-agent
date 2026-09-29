@@ -20,6 +20,8 @@ export interface TransportDeps {
 
 export const DEFAULT_MODEL_TIMEOUT_MS = 60_000;
 const ERROR_BODY_SNIPPET = 240;
+/** Enough of a 429 body to see Groq's "Please try again in 1.2s" hint. */
+const RATE_LIMIT_HINT_CHARS = 2_000;
 
 /**
  * Request headers (which carry the credential) are kept off the instance so
@@ -127,17 +129,21 @@ export class OpenAICompatibleTransport {
   }
 
   private async httpError(response: Response): Promise<ModelProviderError> {
-    let snippet = '';
+    let body = '';
     try {
-      snippet = (await response.text()).slice(0, ERROR_BODY_SNIPPET);
+      body = await response.text();
     } catch {
-      snippet = '';
+      body = '';
     }
+    const snippet = body.slice(0, ERROR_BODY_SNIPPET);
     const message = this.redactor.redact(
       `HTTP ${response.status} from model endpoint${snippet ? `: ${snippet}` : ''}`,
     );
     const status = response.status;
-    const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
+    const retryAfterMs = combineRetryAfter(
+      parseRetryAfter(response.headers.get('retry-after')),
+      status === 429 ? parseRetryHint(body.slice(0, RATE_LIMIT_HINT_CHARS)) : undefined,
+    );
     const options = {
       status,
       ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
@@ -159,4 +165,29 @@ function parseRetryAfter(header: string | null): number | undefined {
   const date = Date.parse(header);
   if (Number.isNaN(date)) return undefined;
   return Math.max(0, date - Date.now());
+}
+
+/**
+ * Groq's TPM 429 often has no Retry-After header. The body says
+ * "Please try again in 2.5s" (or "500ms"). That wait is what a retry needs.
+ */
+export function parseRetryHint(body: string): number | undefined {
+  const match =
+    /try again in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|milliseconds|s|sec|secs|seconds)\b/i.exec(body) ??
+    /retry[- ]after\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|milliseconds|s|sec|secs|seconds)\b/i.exec(body);
+  if (!match?.[1] || !match[2]) return undefined;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount < 0) return undefined;
+  const unit = match[2].toLowerCase();
+  const ms = unit === 'ms' || unit === 'milliseconds' ? amount : amount * 1000;
+  return Math.round(ms);
+}
+
+function combineRetryAfter(
+  headerMs: number | undefined,
+  hintMs: number | undefined,
+): number | undefined {
+  const values = [headerMs, hintMs].filter((value): value is number => value !== undefined);
+  if (values.length === 0) return undefined;
+  return Math.max(...values);
 }

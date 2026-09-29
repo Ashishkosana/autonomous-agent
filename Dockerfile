@@ -1,9 +1,10 @@
-# Hugging Face Docker Space. This is the Space image, not the disposable
-# sandbox image in sandbox/local-linux/Dockerfile.
+# Hugging Face Docker Space and Railway. This is the server image, not the
+# disposable sandbox image in sandbox/local-linux/Dockerfile.
 #
-# A free Space has no Docker daemon, so the agent runs inside this container
-# (SpaceProcessEnvironment). Do not bake secrets into the image. Set them as
-# Space secrets: AGENT_MODEL_*, AGENT_EMBEDDING_*, and DATABASE_URL.
+# One Node process. No nested Docker daemon. The agent runs inside this
+# container (SpaceProcessEnvironment). PORT defaults to 7860; Railway overrides it.
+# Do not bake secrets into the image. Set AGENT_MODEL_*, AGENT_EMBEDDING_*,
+# and DATABASE_URL in the host's secret store.
 FROM node:22-bookworm-slim
 
 RUN apt-get update \

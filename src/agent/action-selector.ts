@@ -15,6 +15,7 @@ import {
   renderAttempts,
   renderGoal,
   renderMemory,
+  renderNextStepHint,
   renderPlan,
   type PresentedMemory,
 } from './prompting.js';
@@ -39,7 +40,7 @@ export class ModelActionSelector implements ActionSelector {
         {
           role: 'system',
           content:
-            'You are the action-selection component of an autonomous agent. Choose exactly one tool call that makes progress on the CURRENT TASK, or finish if the goal is demonstrably complete, or give up if no useful continuation exists. Do not repeat an approach that already failed unless you change something material.',
+            'You are the action-selection component of an autonomous agent. Choose exactly one tool call that makes progress on the CURRENT TASK, or finish if the goal is demonstrably complete, or give up if no useful continuation exists. Do not repeat an approach that already failed unless you change something material. A successful web.fetch is not success for a file goal: the next action is fs.write of that file, using the page text already in the observations. Do not fetch the same URL again.',
         },
         {
           role: 'user',
@@ -48,8 +49,11 @@ export class ModelActionSelector implements ActionSelector {
             renderPlan(input.plan),
             `CURRENT TASK: [${input.task.taskId}] ${input.task.description}\nEXPECTED EVIDENCE: ${input.task.expectedEvidence.join('; ')}`,
             renderAttempts(input.previousAttempts),
+            renderNextStepHint(input.goal, input.previousAttempts),
             renderMemory(memory),
-          ].join('\n\n'),
+          ]
+            .filter((part) => part !== '')
+            .join('\n\n'),
         },
       ],
       tools: input.availableTools,

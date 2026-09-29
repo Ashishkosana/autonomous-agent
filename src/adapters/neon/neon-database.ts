@@ -1,6 +1,6 @@
 import type { EmbeddingProvider } from '../../models/embeddings.js';
 import { MemoryStoreError } from '../../memory/errors.js';
-import type { OpenedMemory } from '../../memory/opened-memory.js';
+import type { EfficiencyListQuery, OpenedMemory } from '../../memory/opened-memory.js';
 import type { RunMetricsRecord } from '../../memory/run-metrics.js';
 import type { SemanticIndex } from '../../memory/retrieval.js';
 import { MIGRATIONS, NEON_SCHEMA_VERSION } from './migrations.js';
@@ -47,10 +47,10 @@ export class NeonDatabase implements OpenedMemory {
     await this.db.query(
       `INSERT INTO agent_run_metrics (
          run_id, goal_statement, status, succeeded, iterations, tool_calls, model_calls,
-         input_tokens, output_tokens, retrieval_hit_rate, retrieval_hit_count,
+         input_tokens, output_tokens, duration_ms, retrieval_hit_rate, retrieval_hit_count,
          signals_used, cited_record_ids, retrieved_record_ids
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
        )
        ON CONFLICT (run_id) DO UPDATE SET
          goal_statement = EXCLUDED.goal_statement,
@@ -61,6 +61,7 @@ export class NeonDatabase implements OpenedMemory {
          model_calls = EXCLUDED.model_calls,
          input_tokens = EXCLUDED.input_tokens,
          output_tokens = EXCLUDED.output_tokens,
+         duration_ms = EXCLUDED.duration_ms,
          retrieval_hit_rate = EXCLUDED.retrieval_hit_rate,
          retrieval_hit_count = EXCLUDED.retrieval_hit_count,
          signals_used = EXCLUDED.signals_used,
@@ -77,6 +78,7 @@ export class NeonDatabase implements OpenedMemory {
         snapshot.modelCalls,
         snapshot.inputTokens,
         snapshot.outputTokens,
+        snapshot.durationMs,
         snapshot.retrievalHitRate,
         snapshot.retrievalHitCount,
         JSON.stringify(snapshot.signalsUsed),
@@ -87,18 +89,26 @@ export class NeonDatabase implements OpenedMemory {
   }
 
   async latestEfficiency(goalStatement: string): Promise<RunMetricsRecord | undefined> {
-    const rows = await this.db.query<MetricsRow>(
-      `SELECT run_id, goal_statement, status, succeeded, iterations, tool_calls, model_calls,
-              input_tokens, output_tokens, retrieval_hit_rate, retrieval_hit_count,
-              signals_used, cited_record_ids, retrieved_record_ids
-       FROM agent_run_metrics
-       WHERE goal_statement = $1
-       ORDER BY recorded_at DESC
-       LIMIT 1`,
-      [goalStatement],
-    );
-    const row = rows[0];
-    return row ? metricsFromRow(row) : undefined;
+    const rows = await this.listEfficiency({ goalStatement, limit: 1 });
+    return rows[0];
+  }
+
+  async listEfficiency(query: EfficiencyListQuery = {}): Promise<readonly RunMetricsRecord[]> {
+    const limit = clampLimit(query.limit);
+    const rows =
+      query.goalStatement === undefined
+        ? await this.db.query<MetricsRow>(`${METRICS_SELECT} ORDER BY recorded_at DESC LIMIT $1`, [
+            limit,
+          ])
+        : await this.db.query<MetricsRow>(
+            `${METRICS_SELECT} WHERE goal_statement = $1 ORDER BY recorded_at DESC LIMIT $2`,
+            [query.goalStatement, limit],
+          );
+    return rows.map(metricsFromRow);
+  }
+
+  async ping(): Promise<void> {
+    await this.db.query('SELECT 1 AS ok');
   }
 
   /** Deletes every agent row in this database. Tests use a dedicated database. */
@@ -143,6 +153,16 @@ async function migrate(db: PgClient): Promise<void> {
   });
 }
 
+const METRICS_SELECT = `SELECT run_id, goal_statement, status, succeeded, iterations, tool_calls, model_calls,
+              input_tokens, output_tokens, duration_ms, retrieval_hit_rate, retrieval_hit_count,
+              signals_used, cited_record_ids, retrieved_record_ids
+       FROM agent_run_metrics`;
+
+function clampLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return 20;
+  return Math.min(50, Math.max(1, Math.floor(limit)));
+}
+
 interface MetricsRow extends Record<string, unknown> {
   run_id: string;
   goal_statement: string;
@@ -153,6 +173,7 @@ interface MetricsRow extends Record<string, unknown> {
   model_calls: number | string;
   input_tokens: number | string;
   output_tokens: number | string;
+  duration_ms: number | string | null;
   retrieval_hit_rate: number | string | null;
   retrieval_hit_count: number | string;
   signals_used: string;
@@ -174,6 +195,7 @@ function metricsFromRow(row: MetricsRow): RunMetricsRecord {
     inputTokens,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
+    durationMs: Number(row.duration_ms ?? 0),
     retrievalHitRate: row.retrieval_hit_rate === null ? null : Number(row.retrieval_hit_rate),
     retrievalHitCount: Number(row.retrieval_hit_count),
     signalsUsed: parseStringArray(row.signals_used, row.run_id),

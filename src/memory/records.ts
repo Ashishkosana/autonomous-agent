@@ -77,8 +77,9 @@ export interface KnowledgeRecord extends MemoryRecordBase<'knowledge'> {
   readonly sources: readonly SourceReference[];
   /**
    * Static initial confidence in [0, 1], fixed by the writer (0.5 for
-   * `web.fetch`, 0.4 for `fs.read`). Nothing reads it to rank, filter, or
-   * decide. It is not a posterior and it is not updated.
+   * `web.fetch` or a document-like `http.request`, 0.4 for `fs.read`).
+   * Nothing reads it to rank, filter, or decide. It is not a posterior and
+   * it is not updated.
    */
   readonly confidence: number;
 }

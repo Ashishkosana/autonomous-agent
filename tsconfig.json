@@ -24,7 +24,9 @@
     "src/**/*.ts",
     "tests/**/*.ts",
     "scripts/agent.ts",
+    "scripts/compare-runs.ts",
     "spaces/huggingface/server.ts",
+    "spaces/huggingface/app.ts",
     "vitest.config.ts"
   ]
 }

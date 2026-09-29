@@ -67,7 +67,7 @@ describe('internet knowledge then a cheaper second run (scripted)', () => {
     );
   });
 
-  it('records fewer iterations and tool calls, and the mechanical condition holds', () => {
+  it('records fewer iterations and tool calls, and the mechanical condition holds', async () => {
     const comparison = compareEfficiency(
       {
         ...measured(pair, 'cold'),
@@ -86,10 +86,20 @@ describe('internet knowledge then a cheaper second run (scripted)', () => {
     expect(comparison.fewerToolCalls).toBe(true);
     expect(comparison.warmCitedRetrievedRecord).toBe(true);
     expect(comparison.mechanicalConditionMet).toBe(true);
-    expect(comparison.cold.retrievalHitRate).toBe(0);
+    // The opening search misses. After the failed write, the loop searches again
+    // and finds the page it just stored, so one of the two cold retrievals hits.
+    expect(comparison.cold.retrievalHitRate).toBe(0.5);
     expect(comparison.warm.retrievalHitRate).toBe(1);
     expect(pair.cold.measured.comparisonLines).toEqual([]);
-    expect(pair.warm.measured.comparisonLines).toEqual([]);
+    expect(pair.warm.measured.comparisonLines.join('\n')).toContain(
+      'Mechanical condition met: true',
+    );
+    expect(pair.warm.measured.comparisonLines.join('\n')).toContain(
+      'does not train foundation-model weights',
+    );
+    const stored = await memory.latestEfficiency?.(E010_GOAL);
+    expect(stored?.runId).toBe(pair.warm.state.runId);
+    expect(stored?.toolCalls).toBe(pair.warm.state.usage.toolCalls);
   });
 
   it('both runs leave a report that contains the required marker', async () => {

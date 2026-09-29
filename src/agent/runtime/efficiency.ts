@@ -1,4 +1,5 @@
 import type { AnyAgentEvent } from '../../events/contracts.js';
+import type { OpenedMemory } from '../../memory/opened-memory.js';
 import type { RunMetricsRecord } from '../../memory/run-metrics.js';
 import type { RunState } from '../../domain/run.js';
 import { trajectoryFromEvents } from './trajectory.js';
@@ -24,6 +25,8 @@ export interface EfficiencyComparison {
   readonly fewerIterations: boolean;
   readonly fewerToolCalls: boolean;
   readonly fewerTokens: boolean;
+  /** Latest run finished in less wall-clock time. Reported, not scored. */
+  readonly shorterDuration: boolean;
   /** Warm cited a record id that its own retrieval returned. */
   readonly warmCitedRetrievedRecord: boolean;
   readonly citedRetrievedRecordIds: readonly string[];
@@ -57,6 +60,7 @@ export function efficiencyFromRun(
     inputTokens: state.usage.inputTokens,
     outputTokens: state.usage.outputTokens,
     totalTokens: state.usage.inputTokens + state.usage.outputTokens,
+    durationMs: wallDurationMs(state.startedAt, state.finishedAt),
     retrievalHitRate:
       ran.length === 0
         ? null
@@ -79,6 +83,7 @@ export function compareEfficiency(
   const fewerIterations = warm.iterations < cold.iterations;
   const fewerToolCalls = warm.toolCalls < cold.toolCalls;
   const fewerTokens = warm.totalTokens < cold.totalTokens;
+  const shorterDuration = warm.durationMs < cold.durationMs;
   const warmCitedRetrievedRecord = citedRetrievedRecordIds.length > 0;
   const warmSucceeded = warm.succeeded;
   return {
@@ -88,6 +93,7 @@ export function compareEfficiency(
     fewerIterations,
     fewerToolCalls,
     fewerTokens,
+    shorterDuration,
     warmCitedRetrievedRecord,
     citedRetrievedRecordIds,
     warmSucceeded,
@@ -101,6 +107,7 @@ export function formatEfficiencyLines(snapshot: RunMetricsRecord): readonly stri
   const rate =
     snapshot.retrievalHitRate === null ? 'not run' : snapshot.retrievalHitRate.toFixed(2);
   return [
+    `Duration: ${snapshot.durationMs} ms`,
     `Retrieval hit rate: ${rate} (${snapshot.retrievalHitCount} hits)`,
     `Signals: ${snapshot.signalsUsed.join(', ') || 'none'}`,
     `Retrieved records: ${snapshot.retrievedRecordIds.join(', ') || 'none'}`,
@@ -110,7 +117,7 @@ export function formatEfficiencyLines(snapshot: RunMetricsRecord): readonly stri
 
 export function formatComparisonLines(comparison: EfficiencyComparison): readonly string[] {
   const line = (snapshot: RunMetricsRecord, label: string) =>
-    `${label}: status ${snapshot.status}, iterations ${snapshot.iterations}, tool calls ${snapshot.toolCalls}, tokens ${snapshot.totalTokens}, retrieval hit rate ${snapshot.retrievalHitRate === null ? 'not run' : snapshot.retrievalHitRate.toFixed(2)}`;
+    `${label}: status ${snapshot.status}, iterations ${snapshot.iterations}, tool calls ${snapshot.toolCalls}, tokens ${snapshot.totalTokens}, duration ${snapshot.durationMs} ms, retrieval hit rate ${snapshot.retrievalHitRate === null ? 'not run' : snapshot.retrievalHitRate.toFixed(2)}`;
   return [
     'Efficiency comparison (measurement, not a score)',
     line(comparison.cold, 'Cold'),
@@ -119,9 +126,59 @@ export function formatComparisonLines(comparison: EfficiencyComparison): readonl
     `Fewer iterations: ${comparison.fewerIterations}`,
     `Fewer tool calls: ${comparison.fewerToolCalls}`,
     `Fewer tokens: ${comparison.fewerTokens}`,
+    `Shorter duration: ${comparison.shorterDuration}`,
     `Warm cited a retrieved record: ${comparison.warmCitedRetrievedRecord}`,
     `Warm passed criteria: ${comparison.warmSucceeded}`,
     `Mechanical condition met: ${comparison.mechanicalConditionMet}`,
     comparison.note,
   ];
+}
+
+/**
+ * The two latest stored runs of one goal. Cold is the earlier of those two;
+ * warm is the latest. Fewer than two rows is a report, not an error.
+ */
+export async function compareStoredRuns(
+  memory: OpenedMemory,
+  goalStatement: string,
+): Promise<{
+  readonly goalStatement: string;
+  readonly runs: readonly RunMetricsRecord[];
+  readonly comparison?: EfficiencyComparison;
+  readonly lines: readonly string[];
+}> {
+  if (!memory.listEfficiency) {
+    return {
+      goalStatement,
+      runs: [],
+      lines: ['This memory backend does not store run metrics.'],
+    };
+  }
+  const runs = await memory.listEfficiency({ goalStatement, limit: 2 });
+  if (runs.length < 2) {
+    return {
+      goalStatement,
+      runs,
+      lines: [
+        runs.length === 0
+          ? 'No stored runs for this goal yet.'
+          : 'One stored run for this goal. Run the same goal again to compare.',
+      ],
+    };
+  }
+  const warm = runs[0];
+  const cold = runs[1];
+  if (!warm || !cold) {
+    return { goalStatement, runs, lines: ['No stored runs for this goal yet.'] };
+  }
+  const comparison = compareEfficiency(cold, warm);
+  return { goalStatement, runs, comparison, lines: formatComparisonLines(comparison) };
+}
+
+function wallDurationMs(startedAt: string, finishedAt: string | undefined): number {
+  if (!finishedAt) return 0;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(finishedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  return Math.max(0, Math.round(end - start));
 }

@@ -1,19 +1,26 @@
-# Hugging Face Space entrypoint
+# Server entrypoint
 
-`server.ts` is a composition root. It reads the environment and passes the
-values into the existing runtime. `src/` does not read `process.env`.
+`server.ts` is a composition root for Railway and a Hugging Face Docker Space.
+It reads the environment and passes the values into the existing runtime.
+`src/` does not read `process.env`. `app.ts` is the HTTP surface: `/health`,
+`/`, `/api/run`, `/api/compare`, and `/api/memory`.
 
-The page on port 7860 accepts one goal and mechanical criteria, then streams
-agent events as server-sent events. The default goal is the `AGENT_ALIVE`
-file check. The internet-learning experiment is documented in the root README
-and in `docs/experiments.md` (E-010); paste that goal if you want to run it.
+The page on `PORT` (default 7860) runs one goal, streams events, and compares
+the two latest stored runs of that same goal. The default goal fetches
+`https://example.com` and writes a lesson file. Learning on the page means
+durable memory. It does not fine-tune model weights.
 
 ## Execution limit
 
-This process uses `SpaceProcessEnvironment`. Commands run in the Space
-container. A free Space has no Docker daemon, so the local-linux sandbox and
-the Cloudflare sandbox are not started here. Those paths stay on the CLI and
-the Worker.
+This process uses `SpaceProcessEnvironment`. Commands run in this container.
+There is no nested Docker daemon, so the local-linux sandbox and the Cloudflare
+sandbox are not started here. Those paths stay on the CLI and the Worker.
+
+Each run gets an ephemeral directory under `/tmp`. The goal, the criteria, and
+the tools still say `/workspace` (the same path the Docker sandbox uses). That
+prefix is mapped onto the ephemeral directory, so `web.fetch` can stage its
+files and `file_contains:/workspace/lesson.txt` can pass. The directory is
+removed when the run ends.
 
 Shell commands do not inherit the process environment, so they cannot print
 `DATABASE_URL`. They can still read other files in the container, including
@@ -21,10 +28,14 @@ Shell commands do not inherit the process environment, so they cannot print
 
 ## Secrets
 
-Set these in the Space settings, not in the repository:
+Set these in the host, not in the repository:
 
-- `AGENT_MODEL_PROVIDER`, `AGENT_MODEL_BASE_URL`, `AGENT_MODEL_NAME`, `AGENT_MODEL_API_KEY`
-- `AGENT_EMBEDDING_PROVIDER`, `AGENT_EMBEDDING_BASE_URL`, `AGENT_EMBEDDING_MODEL`, `AGENT_EMBEDDING_API_KEY` (optional; unset means lexical retrieval)
-- `DATABASE_URL` or `NEON_DATABASE_URL` (Neon). If none is set, memory is a SQLite file under `/tmp` and disappears when the Space sleeps or restarts.
+- `AGENT_MODEL_PROVIDER=openai-compatible`
+- `AGENT_MODEL_BASE_URL=https://api.groq.com/openai/v1`
+- `AGENT_MODEL_NAME=openai/gpt-oss-120b`
+- `AGENT_MODEL_LABEL=groq`
+- `AGENT_MODEL_API_KEY`
+- `AGENT_EMBEDDING_*` (optional; unset means lexical retrieval)
+- `DATABASE_URL` or `NEON_DATABASE_URL` (Neon). If none is set, memory is a SQLite file under `/tmp` and disappears when the container sleeps or restarts.
 
-`PORT` is set by the Space (7860). The server listens on it.
+`GET /health` pings that database. A failed ping returns 503 and does not include the connection string.

@@ -17,6 +17,7 @@ import {
   toolActionProposalSchema,
 } from '../../src/models/openai-compatible/wire.js';
 import { describeTool } from '../../src/tools/contracts.js';
+import { createStandardTools } from '../../src/tools/standard-tools.js';
 import { echoTool, writeFileTool } from '../support/tools.js';
 
 const tools = [describeTool(writeFileTool), describeTool(echoTool)];
@@ -83,28 +84,186 @@ describe('request building', () => {
 
   it('translates tool names to the wire alphabet bijectively', () => {
     const names = new ToolNameMap(['fs.write', 'fs__write', 'web.search']);
-    expect(names.wireName('fs.write')).toBe('fs__write');
-    expect(names.wireName('fs__write')).not.toBe('fs__write');
-    expect(names.originalName(names.wireName('fs__write'))).toBe('fs__write');
-    expect(names.originalName('fs__write')).toBe('fs.write');
+    expect(names.wireName('fs.write')).toBe('fs_write');
+    expect(names.wireName('fs__write')).toBe('fs__write');
+    expect(names.originalName('fs_write')).toBe('fs.write');
+    expect(names.originalName('fs__write')).toBe('fs__write');
+    expect(names.wireName('web.search')).toBe('web_search');
     expect(names.originalName(names.wireName('web.search'))).toBe('web.search');
     expect(names.originalName('nope')).toBeUndefined();
     expect(() => names.wireName('unknown')).toThrow();
   });
 
-  it('wraps each tool schema under `input` with rationale fields and adds finish/give_up', () => {
+  it('keeps a collision off the name another tool already owns', () => {
+    const names = new ToolNameMap(['web.fetch', 'web_fetch', 'web..fetch']);
+    expect(names.wireName('web.fetch')).toBe('web_fetch');
+    expect(names.wireName('web_fetch')).toBe('web_fetch_2');
+    expect(names.wireName('web..fetch')).toBe('web_fetch_3');
+    expect(names.originalName('web_fetch')).toBe('web.fetch');
+    expect(names.originalName('web_fetch_2')).toBe('web_fetch');
+    expect(names.originalName('web_fetch_3')).toBe('web..fetch');
+  });
+
+  it('registers web.fetch as web_fetch, the name Groq must call', () => {
+    const standard = createStandardTools().map((tool) => describeTool(tool));
+    const names = new ToolNameMap(standard.map((tool) => tool.name));
+    const sent = toWireTools(standard, names).map((tool) => tool.function.name);
+
+    expect(names.wireName('web.fetch')).toBe('web_fetch');
+    const fetchParameters = toWireTools(standard, names).find(
+      (tool) => tool.function.name === 'web_fetch',
+    )?.function.parameters;
+    expect(fetchParameters?.required).toEqual(['url']);
+    expect(fetchParameters?.properties?.['url']).toBeDefined();
+    expect(fetchParameters?.properties?.['input']).toBeUndefined();
+    expect(sent).toContain('web_fetch');
+    expect(sent).not.toContain('web.fetch');
+    expect(sent).not.toContain('web__fetch');
+    expect(sent).not.toContain('web.__fetch');
+    for (const name of sent) expect(name).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+    for (const tool of standard) {
+      const wire = names.wireName(tool.name);
+      expect(names.originalName(wire)).toBe(tool.name);
+      if (tool.name.includes('.')) expect(wire).not.toContain('__');
+    }
+
+    const called = proposalFromCompletion(
+      {
+        content: null,
+        finishReason: 'tool_call',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'openai/gpt-oss-120b',
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'web_fetch',
+            arguments: JSON.stringify({
+              input: { url: 'https://example.com' },
+              rationale: 'Read the public page',
+            }),
+          },
+        ],
+      },
+      names,
+      standard.map((tool) => tool.name),
+    );
+    expect(called).toEqual({
+      ok: true,
+      value: {
+        kind: 'tool',
+        toolName: 'web.fetch',
+        input: { url: 'https://example.com' },
+        rationale: 'Read the public page',
+      },
+    });
+
+    const rejected = proposalFromCompletion(
+      {
+        content: null,
+        finishReason: 'tool_call',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'openai/gpt-oss-120b',
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'web.__fetch',
+            arguments: JSON.stringify({
+              input: { url: 'https://example.com' },
+              rationale: 'Read the public page',
+            }),
+          },
+        ],
+      },
+      names,
+      standard.map((tool) => tool.name),
+    );
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.errors.join(' ')).toContain('web.__fetch');
+  });
+
+  it('repairs a gpt-oss tool call that omits the input wrapper', () => {
+    const names = new ToolNameMap(['web.fetch', 'fs.write']);
+    const known = ['web.fetch', 'fs.write'];
+    const flat = proposalFromCompletion(
+      {
+        content: null,
+        finishReason: 'tool_call',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'openai/gpt-oss-120b',
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'fs_write',
+            arguments: JSON.stringify({
+              path: '/workspace/lesson.txt',
+              content: 'Example Domain\nA title worth reusing.\n',
+            }),
+          },
+        ],
+      },
+      names,
+      known,
+    );
+    expect(flat).toEqual({
+      ok: true,
+      value: {
+        kind: 'tool',
+        toolName: 'fs.write',
+        input: {
+          path: '/workspace/lesson.txt',
+          content: 'Example Domain\nA title worth reusing.\n',
+        },
+        rationale: 'Call fs.write.',
+      },
+    });
+    const withRationale = proposalFromCompletion(
+      {
+        content: null,
+        finishReason: 'tool_call',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'openai/gpt-oss-120b',
+        toolCalls: [
+          {
+            id: 'c2',
+            name: 'web_fetch',
+            arguments: JSON.stringify({
+              url: 'https://example.com',
+              rationale: 'Read the page once',
+            }),
+          },
+        ],
+      },
+      names,
+      known,
+    );
+    expect(withRationale).toEqual({
+      ok: true,
+      value: {
+        kind: 'tool',
+        toolName: 'web.fetch',
+        input: { url: 'https://example.com' },
+        rationale: 'Read the page once',
+      },
+    });
+  });
+
+  it('publishes tool fields at the top level so Groq does not require an input wrapper', () => {
     const names = new ToolNameMap(tools.map((t) => t.name));
     const wire = toWireTools(tools, names);
     expect(wire.map((t) => t.function.name)).toEqual([
-      'fs__write',
+      'fs_write',
       'echo',
       FINISH_TOOL,
       GIVE_UP_TOOL,
     ]);
     const write = wire[0]!.function.parameters;
-    expect(write.properties?.['input']).toEqual(describeTool(writeFileTool).inputSchema);
-    expect(write.required).toEqual(['input', 'rationale']);
-    for (const name of ['fs__write', 'echo', FINISH_TOOL, GIVE_UP_TOOL]) {
+    expect(write.properties?.['input']).toBeUndefined();
+    expect(write.properties?.['path']).toEqual({ type: 'string' });
+    expect(write.properties?.['content']).toEqual({ type: 'string' });
+    expect(write.properties?.['rationale']?.type).toBe('string');
+    expect(write.required).toEqual(['path', 'content']);
+    expect(write.required).not.toContain('input');
+    for (const name of ['fs_write', 'echo', FINISH_TOOL, GIVE_UP_TOOL]) {
       expect(name).toMatch(/^[A-Za-z0-9_-]+$/);
     }
     const body = buildToolActionRequest([{ role: 'user', content: 'act' }], tools, names, {
@@ -234,7 +393,7 @@ describe('proposal parsing', () => {
         toolCalls: [
           {
             id: 'c1',
-            name: 'fs__write',
+            name: 'fs_write',
             arguments: JSON.stringify({
               input: { path: '/workspace/a.md', content: 'x' },
               rationale: 'write the file',

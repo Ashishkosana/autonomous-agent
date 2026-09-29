@@ -64,6 +64,7 @@ describeNeon('Neon memory store', () => {
         inputTokens: 10,
         outputTokens: 2,
         totalTokens: 12,
+        durationMs: 1_200,
         retrievalHitRate: 0,
         retrievalHitCount: 0,
         signalsUsed: ['keyword'],
@@ -81,6 +82,7 @@ describeNeon('Neon memory store', () => {
         inputTokens: 8,
         outputTokens: 1,
         totalTokens: 9,
+        durationMs: 400,
         retrievalHitRate: 1,
         retrievalHitCount: 1,
         signalsUsed: ['semantic'],
@@ -90,6 +92,7 @@ describeNeon('Neon memory store', () => {
       const latest = await db.latestEfficiency('same goal');
       expect(latest?.runId).toBe('run-2');
       expect(latest?.iterations).toBe(1);
+      expect(latest?.durationMs).toBe(400);
       expect(latest?.retrievalHitRate).toBe(1);
       expect(latest?.citedRecordIds).toEqual(['mem-1']);
       expect(await db.latestEfficiency('other goal')).toBeUndefined();

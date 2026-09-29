@@ -42,6 +42,7 @@ loop:
             learn + write memory        → MEMORY_WRITTEN (decision, experience), [LESSON_CREATED, MEMORY_WRITTEN]
             success → mark task complete
             failure                     → FAILURE_DETECTED
+                retrieve memory again   → MEMORY_RETRIEVED (goal + failure text)
                 planner revises         → [STRATEGY_CHANGED], PLAN_UPDATED
                 (next iteration retries the same task under the revised plan)
 unrecoverable error anywhere            → GOAL_FAILED cause=unrecoverable (status failed)
@@ -53,21 +54,21 @@ per _attempt_, so retries and re-asks are visible (see §2a).
 
 ### Runtime components
 
-| Component                      | File                                  | Responsibility                                                                                                      |
-| ------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `AgentRuntime`                 | `src/agent/runtime/agent-runtime.ts`  | The loop above. Owns orchestration, task selection, termination, memory writes and all runtime-level events.        |
-| `RunSession`                   | `src/agent/runtime/run-session.ts`    | Per-run ids, clock, goal, event factory + sink, usage tracker, working memory, run state. No orchestration.         |
-| `RunUsageTracker`              | `src/agent/runtime/run-usage.ts`      | `RunUsage` counters and `breach()` — the first `RunLimit` reached.                                                  |
-| `plan-tasks.ts`                | `src/agent/runtime/plan-tasks.ts`     | Pure helpers: next runnable task, status updates.                                                                   |
-| `createAutonomousRun`          | `src/agent/runtime/create-run.ts`     | Composition root: wires defaults around caller-supplied model, tools, environment, evaluator, store and retriever.  |
-| `ModelPlanner`                 | `src/agent/planner.ts`                | Structured plan / revision requests to the model; validates output; builds `Plan` with honest `informedBy`.         |
-| `ModelActionSelector`          | `src/agent/action-selector.ts`        | Tool-action request to the model; turns the proposal into `Action` + `DecisionRecord`, or finish / give up.         |
-| `ToolExecutor`                 | `src/agent/executor.ts`               | Runs one `Action` through the registry against the environment; emits tool events; returns an `Observation`.        |
-| `OutcomeLearner`               | `src/agent/learner.ts`                | Rule-based: one `ExperienceRecord` per attempt; a `LessonRecord` only from a failure → success contrast.            |
-| `ObservationKnowledgeIngestor` | `src/agent/knowledge-ingestor.ts`     | Rule-based: `web.fetch`/`fs.read` output → one `KnowledgeRecord` with source + provenance; refusals say why.        |
-| `InstrumentedModelProvider`    | `src/models/instrumented-provider.ts` | Decorates any `ModelProvider`: assigns the `modelCallId`, reports start / completion / failure records per attempt. |
-| `ResilientModelProvider`       | `src/models/resilient-provider.ts`    | Decorates any `ModelProvider`: bounded backoff retry for transient failures, bounded re-ask for invalid answers.    |
-| `RunWorkingMemory`             | `src/memory/working.ts`               | Process-local working memory for the run.                                                                           |
+| Component                      | File                                  | Responsibility                                                                                                                           |
+| ------------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentRuntime`                 | `src/agent/runtime/agent-runtime.ts`  | The loop above. Owns orchestration, task selection, termination, memory writes and all runtime-level events.                             |
+| `RunSession`                   | `src/agent/runtime/run-session.ts`    | Per-run ids, clock, goal, event factory + sink, usage tracker, working memory, run state. No orchestration.                              |
+| `RunUsageTracker`              | `src/agent/runtime/run-usage.ts`      | `RunUsage` counters and `breach()` — the first `RunLimit` reached.                                                                       |
+| `plan-tasks.ts`                | `src/agent/runtime/plan-tasks.ts`     | Pure helpers: next runnable task, status updates.                                                                                        |
+| `createAutonomousRun`          | `src/agent/runtime/create-run.ts`     | Composition root: wires defaults around caller-supplied model, tools, environment, evaluator, store and retriever.                       |
+| `ModelPlanner`                 | `src/agent/planner.ts`                | Structured plan / revision requests to the model; validates output; builds `Plan` with honest `informedBy`.                              |
+| `ModelActionSelector`          | `src/agent/action-selector.ts`        | Tool-action request to the model; turns the proposal into `Action` + `DecisionRecord`, or finish / give up.                              |
+| `ToolExecutor`                 | `src/agent/executor.ts`               | Runs one `Action` through the registry against the environment; emits tool events; returns an `Observation`.                             |
+| `OutcomeLearner`               | `src/agent/learner.ts`                | Rule-based: one `ExperienceRecord` per attempt; a `LessonRecord` only from a failure → success contrast.                                 |
+| `ObservationKnowledgeIngestor` | `src/agent/knowledge-ingestor.ts`     | Rule-based: `web.fetch`, document-like `http.request`, and `fs.read` → one `KnowledgeRecord` with source + provenance; refusals say why. |
+| `InstrumentedModelProvider`    | `src/models/instrumented-provider.ts` | Decorates any `ModelProvider`: assigns the `modelCallId`, reports start / completion / failure records per attempt.                      |
+| `ResilientModelProvider`       | `src/models/resilient-provider.ts`    | Decorates any `ModelProvider`: bounded backoff retry for transient failures, bounded re-ask for invalid answers.                         |
+| `RunWorkingMemory`             | `src/memory/working.ts`               | Process-local working memory for the run.                                                                                                |
 
 ### 2a. Intelligence layer (Phase 4)
 
@@ -289,10 +290,11 @@ up, `matchedBy` names exactly the signals that contributed, `signalsUsed` includ
 `degraded` lexical result. `kindDiversity` keeps the best hit of each memory kind before
 filling by rank — E-009 showed the agent's own bookkeeping otherwise crowds out the one
 record that came from the world. On the write side, `ObservationKnowledgeIngestor` makes
-`knowledge` the fourth category the loop actually writes: `web.fetch`/`fs.read` output
-becomes a verbatim, capped excerpt with a `SourceReference`, ingested regardless of the
-task's verdict and rendered to the planner as a quoted 400-character excerpt with its
-source. `src/agent/` still cannot name any backend or vendor (architecture rules).
+`knowledge` the fourth category the loop actually writes: `web.fetch`, document-like
+`http.request`, and `fs.read` output becomes a verbatim, capped excerpt with a
+`SourceReference`, ingested regardless of the task's verdict and rendered to the
+planner as a quoted 400-character excerpt with its source. `src/agent/` still cannot
+name any backend or vendor (architecture rules).
 
 **Durable backend (ADR-010).** `openMemoryStore` returns one backend. `sqlite`
 is the local file from ADR-005. `neon` is Postgres through `src/adapters/neon/`

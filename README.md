@@ -10,22 +10,106 @@ pinned: false
 
 # Autonomous agent
 
-A measurable memory-augmented autonomous agent with deterministic evaluation and observability.
+Ashish Kosana's portfolio agent learns from the public internet into durable memory and can spend fewer steps on a later run of the same goal.
 
-It receives one high-level goal, plans and acts inside an isolated Linux sandbox, checks
-the result against mechanical criteria, records what happened, and can retrieve those
-records on a later run. Everything it does is emitted as structured telemetry so a human
-can watch it work — and so a later Living Flame view can reflect measured runtime state,
-never a fake score. Foundation-model weights stay external and fixed. Memory can change
-what a later run is shown; that is not training, and it is not proof that memory helped.
+Learning means writing records. It does **not** fine-tune or train model weights. A later run retrieves what an earlier run stored. The comparison of two runs is a measurement (steps, tool calls, tokens, duration), not a score and not proof that memory caused the difference.
 
-The research question: can an agent accumulate experience across runs, retrieve it when
-relevant, change strategy because of it, and make that growth observable?
+Live demo: https://agent-production-b803.up.railway.app
 
-What is implemented today is a memory-augmented agent with deterministic evaluation,
-lexical and semantic retrieval, and a reconstructable trace. It does **not** train model
-weights, optimise a loss, or statistically prove that memory improves performance.
-`docs/agent-mathematics.md` states the formulas that exist and the claims that do not.
+## The loop
+
+One process. No nested Docker on Railway or a Hugging Face Space.
+
+```
+goal
+  → retrieve memory (keyword, plus embeddings when configured)
+  → plan
+  → decide
+  → tools (including web.fetch of a public http(s) page)
+  → observe
+  → evaluate (mechanical criteria; the model cannot declare success)
+  → write memory: knowledge | experience | decision | lesson
+  → on failure: retrieve again, revise the plan, continue
+  → stop when the goal is done, the agent gives up, or a limit is hit
+```
+
+`web.fetch` accepts public `http` and `https` URLs, refuses embedded credentials, and refuses link-local and cloud-metadata addresses. HTML comes back as text. A useful page from `web.fetch`, or a document-like `http.request` (HTML or plain text, not JSON or binary), becomes a `knowledge` record with the source URL and a capped excerpt. What the tool did becomes `experience`. The choice becomes a `decision`. A success after a failure becomes a `lesson`.
+
+Before the first plan, and again before a revision, the loop retrieves relevant records of those four kinds. The planner is shown them and can cite them.
+
+## Neon schema
+
+`AGENT_MEMORY_BACKEND=neon` stores that memory in Postgres. SQLite remains the local file when Neon is not selected. One process, one backend.
+
+| Table                      | What it holds                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `agent_memory_records`     | JSON body plus kind (`knowledge`, `experience`, `decision`, `lesson`), run, goal, summary   |
+| `agent_memory_record_tags` | Tags for those records                                                                      |
+| `agent_memory_embeddings`  | One float32 vector per record, when an embedding model is configured                        |
+| `agent_run_metrics`        | steps (iterations), tool calls, model calls, tokens, `duration_ms`, success, retrieval hits |
+| `agent_schema_migrations`  | Schema version. Version 2 adds `duration_ms`.                                               |
+
+The password never appears in the page, the event stream, or this file.
+
+## Environment
+
+Groq through its OpenAI-compatible API is the portfolio configuration. The code does not hardcode Groq or xAI. Any OpenAI-compatible chat server works if you change the URL and model name.
+
+```bash
+AGENT_MODEL_PROVIDER=openai-compatible
+AGENT_MODEL_BASE_URL=https://api.groq.com/openai/v1
+AGENT_MODEL_NAME=openai/gpt-oss-120b
+AGENT_MODEL_API_KEY=...
+AGENT_MODEL_LABEL=groq
+AGENT_MEMORY_BACKEND=neon
+DATABASE_URL=postgres://USER:PASSWORD@HOST/DATABASE
+PORT=7860
+```
+
+Connection string order is `AGENT_MEMORY_URL`, then `NEON_DATABASE_URL`, then `DATABASE_URL`. Embeddings are optional (`AGENT_EMBEDDING_*`). Unset means keyword retrieval only. Copy names from `.env.example`. Do not commit values.
+
+## Run locally
+
+Requires Node.js 22 or newer.
+
+```bash
+npm install
+npm test
+npm run agent -- --help
+npm run compare -- --help
+```
+
+Without `AGENT_MEMORY_BACKEND=neon`, the CLI uses `./.agent/memory.sqlite`. That file is git-ignored and survives the process on this machine. The CLI run itself uses the local Docker sandbox (`npm run sandbox:build`). The server does not.
+
+```bash
+npm run agent -- \
+  "Fetch https://example.com once. Then write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal. After the page text is known, do not fetch it again." \
+  --criterion "file_contains:/workspace/lesson.txt|Example Domain"
+```
+
+Run that same goal a second time. Then:
+
+```bash
+npm run compare -- "Fetch https://example.com once. Then write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal. After the page text is known, do not fetch it again."
+```
+
+`npm run compare` only reads stored metrics. It does not call the model. The page at `PORT` (default 7860) has the same comparison button, plus `GET /health` (pings the database; no secrets in the body), `GET /api/memory`, and `POST /api/compare`.
+
+```bash
+PORT=7860 node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./scripts/register-ts.mjs spaces/huggingface/server.ts
+```
+
+## Prove efficiency
+
+1. Run one goal to completion so it writes memory and a row in `agent_run_metrics`.
+2. Run that exact goal text again. Retrieval is on, so the second plan can cite the first run's lesson or knowledge.
+3. Compare the two latest rows: `npm run compare -- "…"`, or the button on the page.
+
+Fewer iterations, fewer tool calls, or a citation of a retrieved record, together with a successful second run, meets the mechanical condition. A shorter duration is reported and is not by itself that condition. The scripted pair in `npm test` (`tests/runtime/efficiency-loop.test.ts`) proves the measurement with a mocked model. `npm run test:neon` runs the same pair against Postgres when `DATABASE_URL` is set, and fails if it is not. `npm run smoke` runs the HTTP health check, the SQLite metrics round-trip, and that dry-run pair.
+
+## Research record
+
+The rest of this file is the operator guide for the same runtime: sandbox, embeddings, and the experiments behind the loop. `docs/architecture.md` is the longer form of the loop. `docs/agent-mathematics.md` states which formulas exist and which claims do not.
 
 ## Status
 
@@ -55,8 +139,8 @@ vector per record in the store's own file, `IndexedMemoryStore` embedding on wri
 ever blocking persistence, `HybridRetriever` fusing metadata, keyword and cosine signals and
 naming exactly which ones matched (with per-kind inclusion so the agent's own bookkeeping
 cannot crowd out what it read from the world), and `ObservationKnowledgeIngestor` turning
-`web.fetch`/`fs.read` output into `knowledge` records with sources — the fourth memory
-category the loop now writes.
+`web.fetch`, document-like `http.request`, and `fs.read` output into `knowledge` records
+with sources — the fourth memory category the loop now writes.
 
 Evidence status: the runtime loop is proven with fakes (E-000) and replayed through the
 real model adapter over a real local HTTP server; the **real Docker suite including E-003
@@ -191,10 +275,11 @@ unless you export the variables yourself.
 
 ## Running against a real model (any OpenAI-compatible endpoint)
 
-The runtime never names a vendor; you name an endpoint. Any server that speaks the OpenAI
-chat-completions format works — hosted free tiers (OpenRouter `:free` models, Groq, Google
-AI Studio's OpenAI-compatible endpoint) or a local server (Ollama, LM Studio — no key). Set
-the variables in your shell (or a git-ignored `.env`; see `.env.example`), then:
+The runtime never names a vendor; you name an endpoint. The portfolio default is Groq
+(`https://api.groq.com/openai/v1`, `openai/gpt-oss-120b`, `AGENT_MODEL_LABEL=groq`).
+Any other OpenAI-compatible server works the same way — OpenRouter, Google AI Studio's
+OpenAI-compatible endpoint, or a local server (Ollama, LM Studio — no key). Set the
+variables in your shell (or a git-ignored `.env`; see `.env.example`), then:
 
 ```bash
 export AGENT_MODEL_PROVIDER=openai-compatible
@@ -265,8 +350,9 @@ ADR-005, E-007 and E-007b in `docs/experiments.md`.
 ### What “learning” means here
 
 The agent does not train, fine-tune, or update foundation-model weights. A run
-learns by writing records: knowledge taken from `web.fetch` or `fs.read`,
-experience of what a tool did, the decision that chose it, and a lesson when
+learns by writing records: knowledge taken from `web.fetch`, a document-like
+`http.request`, or `fs.read`, experience of what a tool did, the decision that
+chose it, and a lesson when
 a later attempt succeeds after a failure. A later run retrieves those records
 and can cite them. Efficiency is measured, not scored: iterations, tool calls,
 tokens, whether the goal completed, and retrieval hit rate. Comparing a cold
@@ -292,14 +378,17 @@ npm run experiment:e010    # the cold/warm pair against that database
 
 Details: ADR-010.
 
-### Hugging Face Space
+### Hugging Face Space and Railway
 
-The repository root `Dockerfile` is a Docker Space (port 7860). It is not the
-sandbox image under `sandbox/local-linux/`. A free Space has no Docker daemon,
-so the Space runs `SpaceProcessEnvironment`: commands execute in the Space
-container, file tools stay under the workspace, and the command environment
-does not include `DATABASE_URL`. A shell can still read other files in the
-container. Prefer a private Space, and do not put secrets in the image.
+The repository root `Dockerfile` is the server image (port 7860). It is not the
+sandbox image under `sandbox/local-linux/`. Railway and a free Space have no
+nested Docker daemon, so the server runs `SpaceProcessEnvironment`: commands
+execute in this container, file tools stay under the workspace, and the command
+environment does not include `DATABASE_URL`. A shell can still read other files
+in the container. Prefer a private Space, and do not put secrets in the image.
+
+The deployed demo is https://agent-production-b803.up.railway.app . `GET /health`
+pings Neon and reports `learning: durable-memory` and `fineTuning: false`.
 
 1. Create a Docker Space from this GitHub repository (the Space card is the
    YAML block at the top of this README: `sdk: docker`, `app_port: 7860`).

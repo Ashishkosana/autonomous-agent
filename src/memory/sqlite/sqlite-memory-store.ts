@@ -6,6 +6,8 @@ import {
   type PersistentMemoryKind,
   type PersistentMemoryRecord,
 } from '../records.js';
+import type { EfficiencyListQuery } from '../opened-memory.js';
+import type { RunMetricsRecord } from '../run-metrics.js';
 import type { MemoryQuery, MemoryStore } from '../store.js';
 import { assertStorableRecord, parseStoredRecord } from '../validate.js';
 
@@ -58,6 +60,25 @@ CREATE TABLE IF NOT EXISTS memory_record_tags (
   PRIMARY KEY (record_id, tag)
 );
 CREATE INDEX IF NOT EXISTS memory_record_tags_tag ON memory_record_tags (tag);
+CREATE TABLE IF NOT EXISTS run_metrics (
+  run_id TEXT PRIMARY KEY,
+  goal_statement TEXT NOT NULL,
+  status TEXT NOT NULL,
+  succeeded INTEGER NOT NULL,
+  iterations INTEGER NOT NULL,
+  tool_calls INTEGER NOT NULL,
+  model_calls INTEGER NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  retrieval_hit_rate REAL,
+  retrieval_hit_count INTEGER NOT NULL,
+  signals_used TEXT NOT NULL,
+  cited_record_ids TEXT NOT NULL,
+  retrieved_record_ids TEXT NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS run_metrics_goal ON run_metrics (goal_statement, recorded_at DESC);
 `;
 
 interface RecordRow {
@@ -212,6 +233,77 @@ export class SqliteMemoryStore implements MemoryStore {
     return Number(row.n);
   }
 
+  async recordEfficiency(snapshot: RunMetricsRecord): Promise<void> {
+    this.requireOpen();
+    this.db
+      .prepare(
+        `INSERT INTO run_metrics (
+           run_id, goal_statement, status, succeeded, iterations, tool_calls, model_calls,
+           input_tokens, output_tokens, duration_ms, retrieval_hit_rate, retrieval_hit_count,
+           signals_used, cited_record_ids, retrieved_record_ids, recorded_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (run_id) DO UPDATE SET
+           goal_statement = excluded.goal_statement,
+           status = excluded.status,
+           succeeded = excluded.succeeded,
+           iterations = excluded.iterations,
+           tool_calls = excluded.tool_calls,
+           model_calls = excluded.model_calls,
+           input_tokens = excluded.input_tokens,
+           output_tokens = excluded.output_tokens,
+           duration_ms = excluded.duration_ms,
+           retrieval_hit_rate = excluded.retrieval_hit_rate,
+           retrieval_hit_count = excluded.retrieval_hit_count,
+           signals_used = excluded.signals_used,
+           cited_record_ids = excluded.cited_record_ids,
+           retrieved_record_ids = excluded.retrieved_record_ids,
+           recorded_at = excluded.recorded_at`,
+      )
+      .run(
+        snapshot.runId,
+        snapshot.goalStatement,
+        snapshot.status,
+        snapshot.succeeded ? 1 : 0,
+        snapshot.iterations,
+        snapshot.toolCalls,
+        snapshot.modelCalls,
+        snapshot.inputTokens,
+        snapshot.outputTokens,
+        snapshot.durationMs,
+        snapshot.retrievalHitRate,
+        snapshot.retrievalHitCount,
+        JSON.stringify(snapshot.signalsUsed),
+        JSON.stringify(snapshot.citedRecordIds),
+        JSON.stringify(snapshot.retrievedRecordIds),
+        new Date().toISOString(),
+      );
+  }
+
+  async latestEfficiency(goalStatement: string): Promise<RunMetricsRecord | undefined> {
+    const rows = await this.listEfficiency({ goalStatement, limit: 1 });
+    return rows[0];
+  }
+
+  async listEfficiency(query: EfficiencyListQuery = {}): Promise<readonly RunMetricsRecord[]> {
+    this.requireOpen();
+    const limit = clampMetricLimit(query.limit);
+    const rows = (query.goalStatement === undefined
+      ? this.db
+          .prepare(`${METRICS_SELECT} ORDER BY recorded_at DESC, rowid DESC LIMIT ?`)
+          .all(limit)
+      : this.db
+          .prepare(
+            `${METRICS_SELECT} WHERE goal_statement = ? ORDER BY recorded_at DESC, rowid DESC LIMIT ?`,
+          )
+          .all(query.goalStatement, limit)) as unknown as MetricsSqlRow[];
+    return rows.map((row) => metricsFromSqlite(row));
+  }
+
+  async ping(): Promise<void> {
+    this.requireOpen();
+    this.db.prepare('SELECT 1 AS ok').get();
+  }
+
   private requireOpen(): void {
     if (!this.open) {
       throw new MemoryStoreError(`Memory store at "${this.path}" is closed`, 'unavailable');
@@ -275,6 +367,78 @@ function ensureSchemaVersion(db: DatabaseSync, path: string): void {
       'configuration',
     );
   }
+}
+
+const METRICS_SELECT = `SELECT run_id, goal_statement, status, succeeded, iterations, tool_calls, model_calls,
+            input_tokens, output_tokens, duration_ms, retrieval_hit_rate, retrieval_hit_count,
+            signals_used, cited_record_ids, retrieved_record_ids
+     FROM run_metrics`;
+
+interface MetricsSqlRow {
+  run_id: string;
+  goal_statement: string;
+  status: string;
+  succeeded: number;
+  iterations: number;
+  tool_calls: number;
+  model_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  retrieval_hit_rate: number | null;
+  retrieval_hit_count: number;
+  signals_used: string;
+  cited_record_ids: string;
+  retrieved_record_ids: string;
+}
+
+function clampMetricLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return 20;
+  return Math.min(50, Math.max(1, Math.floor(limit)));
+}
+
+function metricsFromSqlite(row: MetricsSqlRow): RunMetricsRecord {
+  const inputTokens = Number(row.input_tokens);
+  const outputTokens = Number(row.output_tokens);
+  return {
+    runId: row.run_id,
+    goalStatement: row.goal_statement,
+    status: row.status,
+    succeeded: Boolean(row.succeeded),
+    iterations: Number(row.iterations),
+    toolCalls: Number(row.tool_calls),
+    modelCalls: Number(row.model_calls),
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    durationMs: Number(row.duration_ms),
+    retrievalHitRate: row.retrieval_hit_rate === null ? null : Number(row.retrieval_hit_rate),
+    retrievalHitCount: Number(row.retrieval_hit_count),
+    signalsUsed: parseMetricStrings(row.signals_used, row.run_id),
+    citedRecordIds: parseMetricStrings(row.cited_record_ids, row.run_id),
+    retrievedRecordIds: parseMetricStrings(row.retrieved_record_ids, row.run_id),
+  };
+}
+
+function parseMetricStrings(value: string, runId: string): readonly string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error: unknown) {
+    throw new MemoryStoreError(
+      `Stored run metrics for ${runId} are not valid JSON`,
+      'corrupt_record',
+      undefined,
+      { cause: error },
+    );
+  }
+  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) {
+    throw new MemoryStoreError(
+      `Stored run metrics for ${runId} are not a string array`,
+      'corrupt_record',
+    );
+  }
+  return parsed;
 }
 
 function describe(error: unknown): string {
