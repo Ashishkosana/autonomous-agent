@@ -91,6 +91,8 @@ async function startRun(body: SpaceRunRequest): Promise<PreparedSpaceRun> {
       );
       const id = randomBytes(4).toString('hex');
       const environment = await SpaceProcessEnvironment.start({
+        // Real files live here. `/workspace/...` in the goal and in tool
+        // commands is mapped onto this directory.
         workspaceRoot: `/tmp/agent-space-${id}`,
         environmentId: `space-${id}`,
         ephemeral: true,

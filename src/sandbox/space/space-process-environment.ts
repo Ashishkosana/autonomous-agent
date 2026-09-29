@@ -29,8 +29,18 @@ import { ContainerScripts, parseListLine } from '../local/container-scripts.js';
  *
  * The Docker and Cloudflare adapters are unchanged. This one exists so a
  * Space can run the same `ExecutionEnvironment` tools.
+ *
+ * The default goal and the standard tools speak `/workspace` (the Docker
+ * sandbox root). A Space run's real directory is an ephemeral folder under
+ * `/tmp`. Paths and shell commands that use `/workspace` are mapped onto
+ * that directory, so `file_contains:/workspace/lesson.txt` and `web.fetch`
+ * scratch files land in the writable root. A root that is already
+ * `/workspace` (or under it) is not remapped.
  */
 export const SPACE_PROCESS_PROVIDER = 'space-process';
+
+/** Path the goal, criteria, and standard tools use for the sandbox workspace. */
+export const SPACE_WORKSPACE_ALIAS = '/workspace';
 
 const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const TIMEOUT_EXIT_CODES: ReadonlySet<number> = new Set([124, 137]);
@@ -103,7 +113,11 @@ export class SpaceProcessEnvironment implements ExecutionEnvironment {
     const startedAt = this.now();
     const timeoutMs = options.timeoutMs ?? this.defaultCommandTimeoutMs;
     const seconds = Math.max(0.1, timeoutMs / 1000);
-    const argv = ContainerScripts.runCommand(command, seconds, this.killGraceSeconds);
+    const argv = ContainerScripts.runCommand(
+      mapSpaceWorkspaceCommand(this.workspaceRoot, command),
+      seconds,
+      this.killGraceSeconds,
+    );
     const result = await this.spawn(argv, {
       cwd: this.commandCwd(options.cwd),
       env: this.commandEnv(options.env),
@@ -187,11 +201,17 @@ export class SpaceProcessEnvironment implements ExecutionEnvironment {
     this.requireRunning();
     this.processCounter += 1;
     const processId = `${this.descriptor.environmentId}-${this.processCounter}`;
-    const result = await this.spawn(ContainerScripts.startProcess(processId, command), {
-      cwd: this.commandCwd(options.cwd),
-      env: this.commandEnv(options.env),
-      timeoutMs: 15_000,
-    });
+    const result = await this.spawn(
+      ContainerScripts.startProcess(
+        processId,
+        mapSpaceWorkspaceCommand(this.workspaceRoot, command),
+      ),
+      {
+        cwd: this.commandCwd(options.cwd),
+        env: this.commandEnv(options.env),
+        timeoutMs: 15_000,
+      },
+    );
     const pid = result.stdout.trim();
     if (result.exitCode !== 0 || !/^\d+$/.test(pid)) {
       throw new ExecutionEnvironmentError(
@@ -309,7 +329,7 @@ export class SpaceProcessEnvironment implements ExecutionEnvironment {
   private confine(path: string, options: { missingOutside: false }): string | undefined;
   private confine(path: string, options?: { missingOutside?: true }): string;
   private confine(path: string, options?: { missingOutside?: boolean }): string | undefined {
-    const target = containedPath(this.workspaceRoot, path);
+    const target = mapSpaceWorkspacePath(this.workspaceRoot, path);
     if (target !== undefined) return target;
     if (options?.missingOutside === false) return undefined;
     throw new ExecutionEnvironmentError(
@@ -414,7 +434,51 @@ export class SpaceProcessEnvironment implements ExecutionEnvironment {
   }
 }
 
-function containedPath(workspace: string, inputPath: string): string | undefined {
+/**
+ * Resolve `inputPath` inside `workspaceRoot`. `/workspace` and its children
+ * mean the workspace root when that root is not already under `/workspace`.
+ * `..` is collapsed before the check, so `/workspace/../etc/passwd` is outside.
+ */
+export function mapSpaceWorkspacePath(
+  workspaceRoot: string,
+  inputPath: string,
+): string | undefined {
+  const workspace = stripTrailingSlash(workspaceRoot);
+  const normalized = normaliseAbsolute(inputPath);
+  if (normalized === undefined) return undefined;
+  const mapped = applyWorkspaceAlias(workspace, normalized);
+  if (mapped === workspace || mapped.startsWith(`${workspace}/`)) return mapped;
+  return undefined;
+}
+
+/**
+ * Rewrite `/workspace` path tokens in a shell command onto the real root.
+ * `web.fetch` and `http.request` embed that prefix in the curl script. A URL
+ * such as `https://example.com/workspace/x` is left alone.
+ */
+export function mapSpaceWorkspaceCommand(workspaceRoot: string, command: string): string {
+  const workspace = stripTrailingSlash(workspaceRoot);
+  if (!usesWorkspaceAlias(workspace)) return command;
+  return command.replace(
+    /(^|[\s"'=<>|;(])\/workspace(?=$|\/|[\s"'`]|$)/g,
+    (_match, prefix: string) => `${prefix}${workspace}`,
+  );
+}
+
+function usesWorkspaceAlias(workspace: string): boolean {
+  return workspace !== SPACE_WORKSPACE_ALIAS && !workspace.startsWith(`${SPACE_WORKSPACE_ALIAS}/`);
+}
+
+function applyWorkspaceAlias(workspace: string, normalized: string): string {
+  if (!usesWorkspaceAlias(workspace)) return normalized;
+  if (normalized === SPACE_WORKSPACE_ALIAS) return workspace;
+  if (normalized.startsWith(`${SPACE_WORKSPACE_ALIAS}/`)) {
+    return `${workspace}${normalized.slice(SPACE_WORKSPACE_ALIAS.length)}`;
+  }
+  return normalized;
+}
+
+function normaliseAbsolute(inputPath: string): string | undefined {
   if (!inputPath.startsWith('/') || inputPath.includes('\0')) return undefined;
   const parts: string[] = [];
   for (const segment of inputPath.split('/')) {
@@ -422,9 +486,11 @@ function containedPath(workspace: string, inputPath: string): string | undefined
     if (segment === '..') parts.pop();
     else parts.push(segment);
   }
-  const normalized = `/${parts.join('/')}`;
-  if (normalized === workspace || normalized.startsWith(`${workspace}/`)) return normalized;
-  return undefined;
+  return `/${parts.join('/')}`;
+}
+
+function stripTrailingSlash(path: string): string {
+  return path.replace(/\/+$/, '') || '/';
 }
 
 function fileError(result: SpawnOutcome, context: string): ExecutionEnvironmentError {

@@ -6,6 +6,7 @@ import {
   OpenAICompatibleProvider,
   type OpenAICompatibleConfig,
 } from '../../src/models/openai-compatible/provider.js';
+import { ResilientModelProvider } from '../../src/models/resilient-provider.js';
 import { describeTool } from '../../src/tools/contracts.js';
 import { FixedClock, SequentialIdGenerator } from '../support/deterministic.js';
 import { FakeOpenAIServer, completion } from '../support/fake-openai-server.js';
@@ -328,6 +329,44 @@ describe('OpenAICompatibleProvider — failure mapping', () => {
     expect(error.kind).toBe('rate_limited');
     expect(error.retryable).toBe(true);
     expect(error.retryAfterMs).toBe(3000);
+  });
+
+  it('429 TPM without Retry-After uses the "try again in" hint, then a retry can succeed', async () => {
+    const hint =
+      'Rate limit reached for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, Used 7900, Requested 500. Please try again in 2.5s.';
+    server.enqueue(
+      {
+        kind: 'json',
+        status: 429,
+        body: { error: { message: hint, type: 'tokens', code: 'rate_limit_exceeded' } },
+      },
+      { kind: 'json', body: completion({ content: 'continued' }) },
+    );
+    const slept: number[] = [];
+    const resilient = new ResilientModelProvider(provider(), {
+      maxRetries: 2,
+      sleep: async (ms) => void slept.push(ms),
+    });
+    const response = await resilient.generate({ purpose: 'other', messages: [] });
+    expect(response.text).toBe('continued');
+    expect(slept).toEqual([2500]);
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it('a TPM hint longer than Retry-After is the wait that is used', async () => {
+    server.enqueue({
+      kind: 'json',
+      status: 429,
+      headers: { 'retry-after': '1' },
+      body: {
+        error: {
+          message: 'Rate limit reached on tokens per minute (TPM). Please try again in 2.5s.',
+        },
+      },
+    });
+    const error = await failure(call(provider()));
+    expect(error.kind).toBe('rate_limited');
+    expect(error.retryAfterMs).toBe(2500);
   });
 
   it('5xx → server (retryable); 4xx → bad_request (not retryable); 504 → timeout', async () => {

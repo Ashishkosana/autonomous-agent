@@ -16,6 +16,12 @@ This process uses `SpaceProcessEnvironment`. Commands run in this container.
 There is no nested Docker daemon, so the local-linux sandbox and the Cloudflare
 sandbox are not started here. Those paths stay on the CLI and the Worker.
 
+Each run gets an ephemeral directory under `/tmp`. The goal, the criteria, and
+the tools still say `/workspace` (the same path the Docker sandbox uses). That
+prefix is mapped onto the ephemeral directory, so `web.fetch` can stage its
+files and `file_contains:/workspace/lesson.txt` can pass. The directory is
+removed when the run ends.
+
 Shell commands do not inherit the process environment, so they cannot print
 `DATABASE_URL`. They can still read other files in the container, including
 `/proc`. Do not put secrets in the image. Prefer a private Space.
