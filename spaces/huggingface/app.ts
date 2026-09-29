@@ -9,7 +9,7 @@ import { PERSISTENT_MEMORY_KINDS } from '../../src/memory/records.js';
  * efficiency comparison. example.com is a stable public page.
  */
 export const DEMO_GOAL =
-  'Read the public page https://example.com. Write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal.';
+  'Fetch https://example.com once. Then write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal. After the page text is known, do not fetch it again.';
 
 export const DEMO_CRITERIA = 'file_contains:/workspace/lesson.txt|Example Domain';
 

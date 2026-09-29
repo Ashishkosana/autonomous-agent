@@ -240,11 +240,17 @@ const RATIONALE_PROPERTIES: Readonly<Record<string, JsonSchema>> = {
   },
 };
 
+const TOOL_CONTROL_KEYS = new Set(['input', 'rationale', 'confidence', 'alternatives']);
+
 /**
- * Each agent tool becomes a function whose parameters wrap the tool's own
- * input schema under `input`, alongside the rationale fields. The wrapper
- * keeps the tool's schema untouched and gives the runtime a validated
- * rationale even from servers that drop assistant text when calling tools.
+ * Each agent tool becomes a function whose parameters are the tool's own
+ * fields (`url`, `path`, `content`, …) plus optional rationale fields.
+ *
+ * Groq validates the model's arguments against this schema before we see
+ * the call. gpt-oss-120b passes those fields at the top level and omits a
+ * nested `input` object, which produced HTTP 400 "parameters missing
+ * properties: 'input'". `input` is therefore not required. A call that still
+ * wraps arguments under `input` is accepted when we parse it.
  */
 export function toWireTools(
   tools: readonly ToolDescriptor[],
@@ -254,12 +260,8 @@ export function toWireTools(
     type: 'function',
     function: {
       name: names.wireName(tool.name),
-      description: `[${tool.family}] ${tool.description}`,
-      parameters: {
-        type: 'object',
-        properties: { input: tool.inputSchema, ...RATIONALE_PROPERTIES },
-        required: ['input', 'rationale'],
-      },
+      description: `[${tool.family}] ${tool.description} Pass the tool arguments directly. Do not nest them under input.`,
+      parameters: toolParameters(tool),
     },
   }));
   return [
@@ -296,6 +298,25 @@ export function toWireTools(
       },
     },
   ];
+}
+
+/** Tool fields at the top level. Rationale stays optional so a missing one is not a 400. */
+function toolParameters(tool: ToolDescriptor): JsonSchema {
+  const schema = tool.inputSchema;
+  if (schema.type !== 'object' || schema.properties === undefined) {
+    return {
+      type: 'object',
+      properties: { input: schema, ...RATIONALE_PROPERTIES },
+      required: ['input'],
+    };
+  }
+  return {
+    type: 'object',
+    properties: { ...schema.properties, ...RATIONALE_PROPERTIES },
+    ...(schema.required !== undefined && schema.required.length > 0
+      ? { required: [...schema.required] }
+      : {}),
+  };
 }
 
 export function buildToolActionRequest(
@@ -550,19 +571,35 @@ export function proposalFromToolCall(
     const reason = readString(args, 'reason', errors);
     return errors.length > 0 ? parseFail(...errors) : parseOk({ kind: 'give_up', reason });
   }
-  const rationale = readString(args, 'rationale', errors);
+  const repaired = !('input' in args);
+  const input = repaired ? flatToolInput(args) : args['input'];
+  const rationaleText = typeof args['rationale'] === 'string' ? args['rationale'].trim() : '';
+  const rationale =
+    rationaleText.length > 0
+      ? rationaleText
+      : repaired
+        ? `Call ${toolName}.`
+        : readString(args, 'rationale', errors);
   const confidence = parseConfidence(args, errors);
   const alternatives = parseAlternatives(args['alternatives'], errors);
-  if (!('input' in args)) errors.push('input is required');
   if (errors.length > 0) return parseFail(...errors);
   return parseOk({
     kind: 'tool',
     toolName,
-    input: args['input'],
+    input,
     rationale,
     ...(confidence !== undefined ? { confidence } : {}),
     ...(alternatives !== undefined ? { alternatives } : {}),
   });
+}
+
+/** Arguments gpt-oss sends beside rationale, when it skips the `input` object. */
+function flatToolInput(args: Record<string, unknown>): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (!TOOL_CONTROL_KEYS.has(key)) input[key] = value;
+  }
+  return input;
 }
 
 /** A JSON proposal (json tool mode, or text fallback) → proposal. */

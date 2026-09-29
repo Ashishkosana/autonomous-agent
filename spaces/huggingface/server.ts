@@ -33,7 +33,9 @@ const PORT = Number(process.env['PORT'] ?? '7860');
 const SPACE_LIMITS: RunLimits = {
   maxIterations: 8,
   maxToolCalls: 12,
-  maxModelCalls: 24,
+  // One plan, one fetch, one revision, one write, plus a few Groq 429 retries.
+  // Further fetches of the same page are steered to fs.write instead of a larger budget.
+  maxModelCalls: 32,
   maxTotalTokens: 200_000,
   maxDurationMs: 8 * 60_000,
 };

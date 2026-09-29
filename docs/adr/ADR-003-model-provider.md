@@ -48,9 +48,12 @@ Constraints from the project owner:
    All three end in the same runtime-owned `parse()`; the mode only changes how hard the
    server is asked to comply.
 5. **Tool actions have two modes.** `tools` uses native function calling: each
-   `ToolDescriptor` becomes a function whose parameters wrap the tool's own schema under
-   `input` alongside `rationale` / `confidence` / `alternatives`, plus `finish` and
-   `give_up` pseudo-functions, with `tool_choice: required`. Names are mangled to the wire
+   `ToolDescriptor` becomes a function whose parameters are the tool's own fields
+   (`url`, `path`, `content`) plus optional `rationale` / `confidence` / `alternatives`,
+   plus `finish` and `give_up` pseudo-functions, with `tool_choice: required`. The fields
+   are not nested under `input`: gpt-oss omits that wrapper and Groq then returns HTTP 400
+   "parameters missing properties: 'input'". A call that still sends `input` is accepted
+   when parsed. Names are mangled to the wire
    alphabet bijectively (`fs.write` → `fs_write`, `web.fetch` → `web_fetch`) and translated back.
    A double underscore is not used: Groq's gpt-oss models rewrite `web__fetch` into `web.__fetch`
    and reject that name because it is not in `request.tools`. `json` mode asks

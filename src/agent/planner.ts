@@ -29,6 +29,7 @@ import {
   renderGoal,
   renderMemory,
   renderPlan,
+  renderRecentObservations,
   renderTools,
   type PresentedMemory,
 } from './prompting.js';
@@ -117,7 +118,7 @@ export class ModelPlanner implements Planner {
             renderGoal(input.goal),
             renderTools(input.availableTools),
             renderMemory(memory),
-            'Produce a plan: a one-sentence strategy and an ordered list of tasks, each with the evidence that would prove it done.',
+            'Produce a plan: a one-sentence strategy and an ordered list of tasks, each with the evidence that would prove it done. When the goal is to read a page and write a file, plan two tasks in that order: fetch the page once, then write the file. A fetch does not satisfy a file criterion.',
           ].join('\n\n'),
         },
       ],
@@ -161,8 +162,11 @@ export class ModelPlanner implements Planner {
             ...input.triggeringEvaluations.map(renderEvaluation),
             renderTools(input.availableTools),
             renderMemory(memory),
-            'Diagnose why the approach fell short and revise the plan. Set strategyChanged=true only if the overall approach changes, and explain changeReason. Keep a task by echoing its taskId; omit completed tasks — they are preserved automatically.',
-          ].join('\n\n'),
+            renderRecentObservations(input.working.observations),
+            'Diagnose why the approach fell short and revise the plan. Set strategyChanged=true only if the overall approach changes, and explain changeReason. Keep a task by echoing its taskId; omit completed tasks — they are preserved automatically. If a fetch already returned the page, the next task writes the required file. Do not plan another fetch of the same URL.',
+          ]
+            .filter((part) => part !== '')
+            .join('\n\n'),
         },
       ],
       schema: REVISION_SCHEMA,

@@ -74,8 +74,50 @@ export class ToolExecutor implements Executor {
 }
 
 function summarise(result: ToolResult<unknown>): string {
-  if (result.status === 'ok') {
-    return `${result.toolName} returned ok in ${result.durationMs}ms`;
+  if (result.status !== 'ok') {
+    return `${result.toolName} failed (${result.error.code}): ${result.error.message}`;
   }
-  return `${result.toolName} failed (${result.error.code}): ${result.error.message}`;
+  const detail = outputExcerpt(result.toolName, result.output);
+  const base = `${result.toolName} returned ok in ${result.durationMs}ms`;
+  return detail === undefined ? base : `${base}. ${detail}`;
+}
+
+const OUTPUT_EXCERPT_CHARS = 500;
+
+/**
+ * The selector only sees this summary. A bare "returned ok" made the model
+ * fetch example.com again instead of writing the lesson file.
+ */
+function outputExcerpt(toolName: string, output: unknown): string | undefined {
+  if (!isPlainRecord(output)) return undefined;
+  if (toolName === 'web.fetch' || toolName === 'http.request') {
+    const url = stringField(output, 'finalUrl') ?? stringField(output, 'url');
+    const title = stringField(output, 'title');
+    const text = stringField(output, 'text') ?? stringField(output, 'body');
+    const parts = [
+      url === undefined ? undefined : `url ${url}`,
+      title === undefined ? undefined : `title ${JSON.stringify(title)}`,
+      text === undefined ? undefined : `text ${JSON.stringify(clip(text))}`,
+    ].filter((part): part is string => part !== undefined);
+    return parts.length === 0 ? undefined : parts.join('; ');
+  }
+  if (toolName === 'fs.write') {
+    const path = stringField(output, 'path');
+    return path === undefined ? undefined : `wrote ${path}`;
+  }
+  return undefined;
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function clip(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > OUTPUT_EXCERPT_CHARS ? `${flat.slice(0, OUTPUT_EXCERPT_CHARS)}…` : flat;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

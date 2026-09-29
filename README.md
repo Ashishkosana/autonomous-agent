@@ -83,14 +83,14 @@ Without `AGENT_MEMORY_BACKEND=neon`, the CLI uses `./.agent/memory.sqlite`. That
 
 ```bash
 npm run agent -- \
-  "Read the public page https://example.com. Write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal." \
+  "Fetch https://example.com once. Then write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal. After the page text is known, do not fetch it again." \
   --criterion "file_contains:/workspace/lesson.txt|Example Domain"
 ```
 
 Run that same goal a second time. Then:
 
 ```bash
-npm run compare -- "Read the public page https://example.com. Write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal."
+npm run compare -- "Fetch https://example.com once. Then write /workspace/lesson.txt containing the page title and one lesson worth reusing on a later run of this same goal. After the page text is known, do not fetch it again."
 ```
 
 `npm run compare` only reads stored metrics. It does not call the model. The page at `PORT` (default 7860) has the same comparison button, plus `GET /health` (pings the database; no secrets in the body), `GET /api/memory`, and `POST /api/compare`.

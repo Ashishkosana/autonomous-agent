@@ -110,6 +110,12 @@ describe('request building', () => {
     const sent = toWireTools(standard, names).map((tool) => tool.function.name);
 
     expect(names.wireName('web.fetch')).toBe('web_fetch');
+    const fetchParameters = toWireTools(standard, names).find(
+      (tool) => tool.function.name === 'web_fetch',
+    )?.function.parameters;
+    expect(fetchParameters?.required).toEqual(['url']);
+    expect(fetchParameters?.properties?.['url']).toBeDefined();
+    expect(fetchParameters?.properties?.['input']).toBeUndefined();
     expect(sent).toContain('web_fetch');
     expect(sent).not.toContain('web.fetch');
     expect(sent).not.toContain('web__fetch');
@@ -175,7 +181,73 @@ describe('request building', () => {
     if (!rejected.ok) expect(rejected.errors.join(' ')).toContain('web.__fetch');
   });
 
-  it('wraps each tool schema under `input` with rationale fields and adds finish/give_up', () => {
+  it('repairs a gpt-oss tool call that omits the input wrapper', () => {
+    const names = new ToolNameMap(['web.fetch', 'fs.write']);
+    const known = ['web.fetch', 'fs.write'];
+    const flat = proposalFromCompletion(
+      {
+        content: null,
+        finishReason: 'tool_call',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'openai/gpt-oss-120b',
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'fs_write',
+            arguments: JSON.stringify({
+              path: '/workspace/lesson.txt',
+              content: 'Example Domain\nA title worth reusing.\n',
+            }),
+          },
+        ],
+      },
+      names,
+      known,
+    );
+    expect(flat).toEqual({
+      ok: true,
+      value: {
+        kind: 'tool',
+        toolName: 'fs.write',
+        input: {
+          path: '/workspace/lesson.txt',
+          content: 'Example Domain\nA title worth reusing.\n',
+        },
+        rationale: 'Call fs.write.',
+      },
+    });
+    const withRationale = proposalFromCompletion(
+      {
+        content: null,
+        finishReason: 'tool_call',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'openai/gpt-oss-120b',
+        toolCalls: [
+          {
+            id: 'c2',
+            name: 'web_fetch',
+            arguments: JSON.stringify({
+              url: 'https://example.com',
+              rationale: 'Read the page once',
+            }),
+          },
+        ],
+      },
+      names,
+      known,
+    );
+    expect(withRationale).toEqual({
+      ok: true,
+      value: {
+        kind: 'tool',
+        toolName: 'web.fetch',
+        input: { url: 'https://example.com' },
+        rationale: 'Read the page once',
+      },
+    });
+  });
+
+  it('publishes tool fields at the top level so Groq does not require an input wrapper', () => {
     const names = new ToolNameMap(tools.map((t) => t.name));
     const wire = toWireTools(tools, names);
     expect(wire.map((t) => t.function.name)).toEqual([
@@ -185,8 +257,12 @@ describe('request building', () => {
       GIVE_UP_TOOL,
     ]);
     const write = wire[0]!.function.parameters;
-    expect(write.properties?.['input']).toEqual(describeTool(writeFileTool).inputSchema);
-    expect(write.required).toEqual(['input', 'rationale']);
+    expect(write.properties?.['input']).toBeUndefined();
+    expect(write.properties?.['path']).toEqual({ type: 'string' });
+    expect(write.properties?.['content']).toEqual({ type: 'string' });
+    expect(write.properties?.['rationale']?.type).toBe('string');
+    expect(write.required).toEqual(['path', 'content']);
+    expect(write.required).not.toContain('input');
     for (const name of ['fs_write', 'echo', FINISH_TOOL, GIVE_UP_TOOL]) {
       expect(name).toMatch(/^[A-Za-z0-9_-]+$/);
     }
