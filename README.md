@@ -33,7 +33,7 @@ goal
   → stop when the goal is done, the agent gives up, or a limit is hit
 ```
 
-`web.fetch` accepts public `http` and `https` URLs, refuses embedded credentials, and refuses link-local and cloud-metadata addresses. HTML comes back as text. A useful page becomes a `knowledge` record. What the tool did becomes `experience`. The choice becomes a `decision`. A success after a failure becomes a `lesson`.
+`web.fetch` accepts public `http` and `https` URLs, refuses embedded credentials, and refuses link-local and cloud-metadata addresses. HTML comes back as text. A useful page from `web.fetch`, or a document-like `http.request` (HTML or plain text, not JSON or binary), becomes a `knowledge` record with the source URL and a capped excerpt. What the tool did becomes `experience`. The choice becomes a `decision`. A success after a failure becomes a `lesson`.
 
 Before the first plan, and again before a revision, the loop retrieves relevant records of those four kinds. The planner is shown them and can cite them.
 
@@ -139,8 +139,8 @@ vector per record in the store's own file, `IndexedMemoryStore` embedding on wri
 ever blocking persistence, `HybridRetriever` fusing metadata, keyword and cosine signals and
 naming exactly which ones matched (with per-kind inclusion so the agent's own bookkeeping
 cannot crowd out what it read from the world), and `ObservationKnowledgeIngestor` turning
-`web.fetch`/`fs.read` output into `knowledge` records with sources — the fourth memory
-category the loop now writes.
+`web.fetch`, document-like `http.request`, and `fs.read` output into `knowledge` records
+with sources — the fourth memory category the loop now writes.
 
 Evidence status: the runtime loop is proven with fakes (E-000) and replayed through the
 real model adapter over a real local HTTP server; the **real Docker suite including E-003
@@ -350,8 +350,9 @@ ADR-005, E-007 and E-007b in `docs/experiments.md`.
 ### What “learning” means here
 
 The agent does not train, fine-tune, or update foundation-model weights. A run
-learns by writing records: knowledge taken from `web.fetch` or `fs.read`,
-experience of what a tool did, the decision that chose it, and a lesson when
+learns by writing records: knowledge taken from `web.fetch`, a document-like
+`http.request`, or `fs.read`, experience of what a tool did, the decision that
+chose it, and a lesson when
 a later attempt succeeds after a failure. A later run retrieves those records
 and can cite them. Efficiency is measured, not scored: iterations, tool calls,
 tokens, whether the goal completed, and retrieval hit rate. Comparing a cold

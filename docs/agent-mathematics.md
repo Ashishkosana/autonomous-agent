@@ -107,7 +107,7 @@ What gets added after an evaluated attempt (`OutcomeLearner`, `ObservationKnowle
 
 - one decision record, outcome = the evaluation verdict (or `pending` before evaluation)
 - one experience record, outcome = the same verdict
-- zero or one knowledge record, when `web.fetch` or `fs.read` returned usable text
+- zero or one knowledge record, when `web.fetch`, a document-like `http.request`, or `fs.read` returned usable text
 - one lesson record only when this attempt's verdict is `success` and an earlier attempt **of the same task** had a verdict other than `success`
 
 `fs.read` and `fs.delete` experiences also store a precondition `{kind: 'file_exists', path}`. At the next presentation the runtime checks it against the sandbox. A violation is rendered as `PRECONDITION VIOLATED` and does not change \(S(r)\).
@@ -137,7 +137,7 @@ The raw tool status is recorded and is not decisive unless the caller added a `t
 
 ### Confidence — IMPLEMENTED as a constant, not as an update
 
-Knowledge confidence is 0.5 (`web.fetch`) or 0.4 (`fs.read`). Lesson confidence is 0.6. Decision confidence is present only when the model reported one. None of these numbers are read by retrieval, planning, or evaluation, and none of them change after they are written. **PROPOSED/FUTURE:** any Bayesian or evidence-based update.
+Knowledge confidence is 0.5 (`web.fetch` or a document-like `http.request`) or 0.4 (`fs.read`). Lesson confidence is 0.6. Decision confidence is present only when the model reported one. None of these numbers are read by retrieval, planning, or evaluation, and none of them change after they are written. **PROPOSED/FUTURE:** any Bayesian or evidence-based update.
 
 ### Lesson validation counters — not a live update
 

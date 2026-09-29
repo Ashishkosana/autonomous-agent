@@ -73,9 +73,11 @@ dimensions, sha256(text))`; may share the store's file. Search filters by the cu
    earned. See _Reason_.
 5. **Knowledge ingestion** (`KnowledgeIngestor` in `src/agent/contracts.ts`;
    `ObservationKnowledgeIngestor` in `src/agent/knowledge-ingestor.ts`): rule-based, V1.
-   `web.fetch` (confidence 0.5) and `fs.read` (0.4) outputs — recognised by tool name _and_
-   output shape — become one `KnowledgeRecord` each with a `SourceReference` (url/path, tool,
-   `retrievedAt`, `actionId`) and provenance (action, observation, plan, decision). Failed
+   `web.fetch` and a document-like `http.request` (confidence 0.5) and `fs.read` (0.4)
+   outputs — recognised by tool name _and_ output shape — become one `KnowledgeRecord`
+   each with a `SourceReference` (url/path, tool, `retrievedAt`, `actionId`) and
+   provenance (action, observation, plan, decision). The same URL read by both web tools
+   in one action is stored once. Failed
    calls, HTTP ≥ 400, non-ingestible tools and near-empty content are never knowledge, and
    each refusal says why. The runtime ingests after the experience record and **regardless of
    the verdict** (`KNOWLEDGE_INGESTED` precedes the record's `MEMORY_WRITTEN`, carries
