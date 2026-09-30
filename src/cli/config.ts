@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from 'node:path';
+import { databasePassword, describeDatabaseTarget } from '../adapters/neon/database-url.js';
 import type { VerifiableCriterion } from '../domain/criteria.js';
 import type { RunLimits } from '../domain/run.js';
 import { resolveMemoryConfig, type Environment } from '../memory/config.js';
@@ -16,12 +17,18 @@ import { DEFAULT_CLI_LIMITS } from './limits.js';
 /** Git-ignored directory the CLI uses when AGENT_MEMORY_* is unset. */
 export const CLI_DEFAULT_MEMORY_RELATIVE = '.agent/memory.sqlite';
 
+export type CliMemory =
+  | { readonly kind: 'sqlite'; readonly path: string }
+  | { readonly kind: 'neon'; readonly connectionString: string };
+
 export interface CliStartup {
   readonly goalStatement: string;
   readonly constraints: readonly string[];
   readonly verifiableCriteria: readonly VerifiableCriterion[];
   readonly memoryRetrieval: 'on' | 'off';
+  /** Display label. A filesystem path, or a Neon host with the password removed. */
   readonly memoryPath: string;
+  readonly memory: CliMemory;
   readonly model: ModelProviderConfig;
   readonly embedding: EmbeddingProviderConfig;
   readonly limits: RunLimits;
@@ -44,16 +51,31 @@ export function resolveCliStartup(
       'No model provider configured. Set AGENT_MODEL_PROVIDER, AGENT_MODEL_BASE_URL, and AGENT_MODEL_NAME in the environment or in .env (see .env.example). The API key is never printed.',
     );
   }
+  const memory = resolveCliMemory(env, cwd);
   return {
     goalStatement: args.goalStatement,
     constraints: args.constraints,
     verifiableCriteria: args.verifiableCriteria,
     memoryRetrieval: args.memoryRetrieval,
-    memoryPath: resolveCliMemoryPath(env, cwd),
+    memoryPath:
+      memory.kind === 'sqlite' ? memory.path : describeDatabaseTarget(memory.connectionString),
+    memory,
     model,
     embedding: resolveEmbeddingConfig(env),
     limits: DEFAULT_CLI_LIMITS,
   };
+}
+
+export function resolveCliMemory(env: Environment, cwd: string): CliMemory {
+  const backend = env['AGENT_MEMORY_BACKEND']?.trim() ?? '';
+  if (backend === 'neon') {
+    const configured = resolveMemoryConfig(env);
+    if (configured.kind !== 'neon') {
+      throw new Error('memory configuration did not resolve to neon');
+    }
+    return { kind: 'neon', connectionString: configured.connectionString };
+  }
+  return { kind: 'sqlite', path: resolveCliMemoryPath(env, cwd) };
 }
 
 export function resolveCliMemoryPath(env: Environment, cwd: string): string {
@@ -75,6 +97,7 @@ export function resolveCliMemoryPath(env: Environment, cwd: string): string {
 export function configuredSecrets(
   model: ModelProviderConfig,
   embedding: EmbeddingProviderConfig,
+  memory?: CliMemory,
 ): readonly string[] {
   const secrets: string[] = [];
   if (model.kind === 'openai-compatible') {
@@ -84,6 +107,11 @@ export function configuredSecrets(
   if (embedding.kind === 'openai-compatible') {
     if (embedding.apiKey) secrets.push(embedding.apiKey);
     if (embedding.extraHeaders) secrets.push(...Object.values(embedding.extraHeaders));
+  }
+  if (memory?.kind === 'neon') {
+    secrets.push(memory.connectionString);
+    const password = databasePassword(memory.connectionString);
+    if (password) secrets.push(password);
   }
   return secrets;
 }

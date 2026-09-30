@@ -12,6 +12,7 @@ An ADR is written when a decision is taken, not before. OPEN decisions are liste
 | [ADR-004](ADR-004-standard-tools.md)                    | Standard tools acting only through `ExecutionEnvironment`      | Accepted; proven on real Linux, Docker run pending     |
 | [ADR-005](ADR-005-structured-memory-storage.md)         | SQLite (`node:sqlite`) memory store, filesystem object storage | Accepted; proven across processes/sandboxes (E-007)    |
 | [ADR-006](ADR-006-semantic-retrieval.md)                | Embeddings, vectors in SQLite, hybrid retrieval, ingestion     | Accepted; proven with a real embedding model (E-008/9) |
+| [ADR-010](ADR-010-neon-memory.md)                       | Neon Postgres for memory that survives a Space restart         | Accepted; contract suite gated on a database (E-010)   |
 | ADR-007                                                 | Browser runtime (and web search backend)                       | Open (Phase 9)                                         |
 | ADR-008                                                 | Event transport and dashboard backend                          | Open (Phase 10)                                        |
 | ADR-009                                                 | Living Flame growth formula                                    | Open (Phase 12)                                        |

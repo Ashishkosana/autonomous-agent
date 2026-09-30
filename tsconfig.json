@@ -20,5 +20,11 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/agent.ts", "vitest.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/agent.ts",
+    "spaces/huggingface/server.ts",
+    "vitest.config.ts"
+  ]
 }

@@ -9,6 +9,7 @@ import {
   type CliStartup,
 } from '../src/cli/config.js';
 import { AGENT_HELP } from '../src/cli/help.js';
+import { formatEfficiencyLines, type MeasuredRun } from '../src/agent/runtime/efficiency.js';
 import { formatRunSummary, TerminalEventRenderer } from '../src/cli/render.js';
 import { runLocalDockerAgent } from '../src/composition/local-docker-run.js';
 import { SystemClock } from '../src/domain/system-clock.js';
@@ -45,7 +46,9 @@ try {
   process.exit(1);
 }
 
-const redactor = new SecretRedactor(configuredSecrets(startup.model, startup.embedding));
+const redactor = new SecretRedactor(
+  configuredSecrets(startup.model, startup.embedding, startup.memory),
+);
 const write = (line: string): void => {
   process.stdout.write(`${redactor.redact(line)}\n`);
 };
@@ -62,7 +65,9 @@ if (startup.verifiableCriteria.length === 0) {
   write('');
 }
 
-if (startup.memoryPath !== ':memory:') mkdirSync(dirname(startup.memoryPath), { recursive: true });
+if (startup.memory.kind === 'sqlite' && startup.memory.path !== ':memory:') {
+  mkdirSync(dirname(startup.memory.path), { recursive: true });
+}
 
 const events = new SubscribableEventSink((error) => {
   const message = error instanceof Error ? error.message : String(error);
@@ -74,6 +79,7 @@ events.subscribe((event) => renderer.handle(event));
 const clock = new SystemClock();
 const ids = new UniqueIdGenerator();
 let cleanup = async (): Promise<void> => {};
+let measured: MeasuredRun | undefined;
 let stopRequested = false;
 process.once('SIGINT', () => {
   stopRequested = true;
@@ -93,7 +99,9 @@ try {
     constraints: startup.constraints,
     verifiableCriteria: startup.verifiableCriteria,
     memoryRetrieval: startup.memoryRetrieval,
-    memoryPath: startup.memoryPath,
+    ...(startup.memory.kind === 'sqlite'
+      ? { memoryPath: startup.memory.path }
+      : { neonConnectionString: startup.memory.connectionString }),
     model: createModelProvider(startup.model, { clock, ids }),
     ...(embeddings ? { embeddings } : {}),
     events,
@@ -106,11 +114,21 @@ try {
     onIndexFailure: (message) => {
       writeError(`Memory index: ${message}`);
     },
+    onMetricsFailure: (message) => {
+      writeError(`Run metrics: ${message}`);
+    },
+    onMeasured: (value) => {
+      measured = value;
+    },
   });
   if (stopRequested) {
     // The signal handler destroys the sandbox and exits.
   } else {
     for (const line of formatRunSummary(outcome.state)) write(line);
+    if (measured) {
+      for (const line of formatEfficiencyLines(measured.metrics)) write(line);
+      for (const line of measured.comparisonLines) write(line);
+    }
     process.exit(outcome.state.status === 'completed' ? 0 : 2);
   }
 } catch (error: unknown) {

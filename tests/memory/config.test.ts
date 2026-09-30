@@ -38,6 +38,29 @@ describe('memory and storage configuration', () => {
     ).toEqual({ kind: 'sqlite', path: '/tmp/m.sqlite' });
   });
 
+  it('neon resolves the first connection string and names every variable when none is set', () => {
+    const url = 'postgres://agent:secret@localhost/agent';
+    expect(
+      resolveMemoryConfig({
+        [MEMORY_ENV.backend]: 'neon',
+        [MEMORY_ENV.url]: ` ${url} `,
+        [MEMORY_ENV.databaseUrl]: 'postgres://other@localhost/other',
+      }),
+    ).toEqual({ kind: 'neon', connectionString: url });
+    expect(
+      resolveMemoryConfig({
+        [MEMORY_ENV.backend]: 'neon',
+        [MEMORY_ENV.neonDatabaseUrl]: url,
+      }).kind,
+    ).toBe('neon');
+    expect(
+      resolveMemoryConfig({ [MEMORY_ENV.backend]: 'neon', [MEMORY_ENV.databaseUrl]: url }),
+    ).toEqual({ kind: 'neon', connectionString: url });
+    expect(() => resolveMemoryConfig({ [MEMORY_ENV.backend]: 'neon' })).toThrowError(
+      new RegExp(`${MEMORY_ENV.url}.*${MEMORY_ENV.neonDatabaseUrl}.*${MEMORY_ENV.databaseUrl}`),
+    );
+  });
+
   it('filesystem storage needs a root; unknown backends are configuration errors', () => {
     expect(() => resolveStorageConfig({ [STORAGE_ENV.backend]: 'filesystem' })).toThrowError(
       new RegExp(STORAGE_ENV.root),
@@ -51,10 +74,10 @@ describe('memory and storage configuration', () => {
   it('opens real backends from resolved config', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-config-'));
     try {
-      const store = openMemoryStore({ kind: 'sqlite', path: join(dir, 'm.sqlite') });
-      await store.put(knowledge);
-      expect(await store.count()).toBe(1);
-      store.close();
+      const opened = await openMemoryStore({ kind: 'sqlite', path: join(dir, 'm.sqlite') });
+      await opened.store.put(knowledge);
+      expect(await opened.store.count()).toBe(1);
+      await opened.close();
       const storage = await openPersistentStorage({
         kind: 'filesystem',
         root: join(dir, 'objects'),

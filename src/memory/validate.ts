@@ -1,5 +1,9 @@
 import { MemoryStoreError } from './errors.js';
-import { PERSISTENT_MEMORY_KINDS, type PersistentMemoryRecord } from './records.js';
+import {
+  PERSISTENT_MEMORY_KINDS,
+  type PersistentMemoryKind,
+  type PersistentMemoryRecord,
+} from './records.js';
 
 /**
  * The invariants every MemoryStore relies on for indexing and retrieval,
@@ -51,4 +55,42 @@ export function storableRecordProblems(record: unknown): string[] {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * Turns a stored JSON body back into a record. The body is the source of
+ * truth; `recordId` and `kind` are the index columns and must agree with it.
+ * A damaged row is refused whole — callers never see a partial record.
+ */
+export function parseStoredRecord(
+  body: string,
+  recordId: string,
+  kind: string,
+): PersistentMemoryRecord {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch (error: unknown) {
+    throw new MemoryStoreError(
+      `Stored memory record ${recordId} is not valid JSON`,
+      'corrupt_record',
+      recordId,
+      { cause: error },
+    );
+  }
+  const record = parsed as { recordId?: unknown; kind?: unknown };
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    record.recordId !== recordId ||
+    record.kind !== kind ||
+    !PERSISTENT_MEMORY_KINDS.includes(kind as PersistentMemoryKind)
+  ) {
+    throw new MemoryStoreError(
+      `Stored memory record ${recordId} does not match its index row`,
+      'corrupt_record',
+      recordId,
+    );
+  }
+  return parsed as PersistentMemoryRecord;
 }

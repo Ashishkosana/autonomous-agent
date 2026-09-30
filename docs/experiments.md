@@ -706,3 +706,77 @@ Not experiments, but the tests that make later experiments meaningful:
   when the artifact it produced is empty.
 - `tests/provenance.test.ts` — the chain from a new lesson back to the memory record that
   informed the plan is walkable by identifiers alone.
+
+## E-010 — Same goal twice: cold memory, then warm memory (measurement)
+
+**Hypothesis.** A page read from the public web in Run 1 is stored as knowledge.
+Run 2 of the same goal retrieves that record. The mechanical condition is:
+Run 2 completes, and it uses fewer iterations, or fewer tool calls, or it cites
+a record its own retrieval returned. This is not a learning score. It does not
+say memory caused the difference. Foundation-model weights are not trained.
+
+**What `npm test` proves.** `tests/runtime/efficiency-loop.test.ts` runs the
+pair on SQLite with a scripted model and a fake page (`https://example.com/house-style`
+is answered in-process; curl is not called). Run 1 is plan → `web.fetch` →
+revise → `fs.write` (2 iterations, 2 tool calls). The fetch is ingested
+(`KNOWLEDGE_INGESTED`, source URL, title "House style for written summaries").
+Run 2 is shown that knowledge, the plan cites it, and the report is written
+on the first action (1 iteration, 1 tool call). Both complete
+`file_contains:/workspace/report.md|## Sources`. The scripted model is there
+so the counters are real. It is not evidence that a chat model got faster.
+
+**What `npm run experiment:e010` proves.** The same pair against Postgres
+(`tests/integration/neon/neon.test.ts`, test name contains `E-010`). Records
+and the warm run's metric row are still there after the connection is closed
+and opened again. Without `AGENT_MEMORY_URL`, `NEON_DATABASE_URL`, or
+`DATABASE_URL`, the command fails instead of skipping. `deleteAll()` truncates
+the agent tables: use a dedicated Neon branch or database.
+
+```bash
+export AGENT_MEMORY_BACKEND=neon
+export DATABASE_URL=postgres://...    # dedicated database; not committed
+npm run experiment:e010
+```
+
+`npm run test:neon` runs the MemoryStore contract, the vector round-trip, the
+metric row, and E-010.
+
+**Real model, two CLI runs (do not fill in scores ahead of time).** This has
+not been executed in this change. Run it yourself and write the numbers you
+observe. A scripted pass above is not a substitute.
+
+```bash
+export AGENT_MEMORY_BACKEND=neon
+export DATABASE_URL=postgres://...          # dedicated database
+export AGENT_MODEL_PROVIDER=openai-compatible
+export AGENT_MODEL_BASE_URL=https://<endpoint>/v1
+export AGENT_MODEL_NAME=<model>
+export AGENT_MODEL_API_KEY=<key>            # omit for a keyless local server
+export AGENT_EMBEDDING_PROVIDER=openai-compatible
+export AGENT_EMBEDDING_BASE_URL=http://localhost:11434/v1
+export AGENT_EMBEDDING_MODEL=nomic-embed-text
+
+npm run agent -- \
+  "Write a short report at /workspace/report.md about written summaries, and end the file with a Sources heading that names the material used. Read https://example.com/house-style first." \
+  --require-file /workspace/report.md \
+  --require-marker "## Sources"
+```
+
+Run that command a second time with the same goal, the same criteria, and the
+same Neon database. After each run the CLI prints retrieval hit rate, retrieved
+ids, cited ids, and, on the second run, a comparison with the stored counters.
+Record iterations, tool calls, tokens, status, and whether the warm plan's
+`informedByMemoryRecordIds` includes the knowledge id from the first run's
+`KNOWLEDGE_INGESTED` event.
+
+Success for this procedure is the mechanical condition: Run 2 completed, and
+it used fewer iterations or fewer tool calls, or it cited a record that run
+retrieved. If the model ignores the page, costs more, or fails the marker,
+write that down. Do not treat a failed pair as a pass. Docker is required for
+the CLI; the Space page can run the same goal text and criteria, with the
+limits printed in `spaces/huggingface/server.ts` (8 iterations, 12 tool calls,
+8 minutes). The Space does not start a nested container.
+
+**Status.** Scripted SQLite pair: part of `npm test`. Neon pair: gated, not
+claimed until `experiment:e010` is run against a database. Real-model pair:
+not run. No weight training. No efficiency number is invented here.

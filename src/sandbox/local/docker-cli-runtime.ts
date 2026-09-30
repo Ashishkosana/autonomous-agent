@@ -32,8 +32,10 @@ const CONTAINER_STATUSES: ReadonlySet<string> = new Set([
  * CLI is spawned directly — never through a shell — with argv built by the
  * pure functions below, so tests can assert the exact flags without Docker.
  *
- * Only this file in `src/` spawns processes; `tests/architecture.test.ts`
- * enforces it.
+ * This file and `sandbox/space/space-process-environment.ts` are the only
+ * files in `src/` that spawn processes; `tests/architecture.test.ts`
+ * enforces it. The Space adapter is a separate execution environment, not
+ * a fallback for this one.
  */
 export class DockerCliRuntime implements ContainerRuntime {
   private readonly binary: string;
