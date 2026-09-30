@@ -1,0 +1,4 @@
+{
+  "name": "Autonomous agent",
+  "install": "npm ci"
+}
